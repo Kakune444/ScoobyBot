@@ -150,3 +150,5 @@ Pour un usage 24/7, héberge sur un VPS, Railway, Render, ou un Raspberry Pi qui
 - **VPS** (OVH, Hetzner...) : contrôle total, un service systemd ou une session screen/tmux suffit
 - **Railway / Render** : déploiement simple depuis GitHub, attention au stockage éphémère
 - **Docker** : possible d'ajouter un Dockerfile si besoin
+
+Pour héberger gratuitement sans passer par ton PC : voir [`DEPLOIEMENT_GRATUIT.txt`](./DEPLOIEMENT_GRATUIT.txt).

@@ -1,0 +1,119 @@
+METTRE SCOOBYBOT EN LIGNE GRATUITEMENT (SANS PC PERSONNEL)
+============================================================
+
+Attention avant de commencer :
+Les offres gratuites des hébergeurs cloud changent souvent (limites,
+durée d'essai, obligation de carte bancaire...). Vérifie toujours les
+conditions actuelles sur le site de l'hébergeur avant de t'engager.
+Ce fichier donne la marche à suivre générale, pas des tarifs figés.
+
+Le bot doit tourner 24h/24 sans s'arrêter, il faut donc un hébergeur
+qui garde un programme actif en permanence (pas juste un site web
+qui "dort" après quelques minutes sans visite).
+
+
+OPTION RECOMMANDÉE : ORACLE CLOUD FREE TIER (VM gratuite à vie)
+------------------------------------------------------------
+C'est l'option la plus fiable sur la durée : Oracle offre une vraie
+petite machine virtuelle Linux gratuite en permanence (pas un essai
+limité dans le temps), suffisante pour un bot Discord.
+
+Inconvénient : demande un peu de manipulation en ligne de commande
+(SSH), et une carte bancaire est demandée à l'inscription pour
+vérifier l'identité (aucun prélèvement sur l'offre gratuite).
+
+Étapes :
+1. Crée un compte sur le site d'Oracle Cloud (Oracle Cloud Free Tier).
+2. Dans la console, crée une "Compute Instance" en choisissant une
+   forme listée "Always Free" (VM.Standard.E2.1.Micro ou une forme
+   Ampere ARM "Always Free"), image Ubuntu.
+3. Connecte-toi en SSH à la machine avec le fichier de clé généré
+   pendant la création.
+4. Installe Python et Git :
+     sudo apt update
+     sudo apt install -y python3 python3-pip python3-venv git ffmpeg
+5. Récupère le projet :
+     git clone <URL-de-ton-repo>
+     cd ScoobyBot
+     python3 -m venv venv
+     source venv/bin/activate
+     pip install -r requirements.txt
+6. Crée le fichier .env avec ton token (ne jamais le mettre dans le
+   repo Git) :
+     cp .env.example .env
+     nano .env
+   → colle ton DISCORD_TOKEN, sauvegarde (Ctrl+O puis Ctrl+X)
+7. Fais tourner le bot en permanence avec un service systemd (pour
+   qu'il redémarre automatiquement si le serveur reboot ou si le
+   bot plante) :
+     sudo nano /etc/systemd/system/scoobybot.service
+
+   Contenu à coller :
+     [Unit]
+     Description=ScoobyBot Discord Bot
+     After=network.target
+
+     [Service]
+     WorkingDirectory=/home/ubuntu/ScoobyBot
+     ExecStart=/home/ubuntu/ScoobyBot/venv/bin/python bot.py
+     Restart=always
+     User=ubuntu
+
+     [Install]
+     WantedBy=multi-user.target
+
+   Puis :
+     sudo systemctl daemon-reload
+     sudo systemctl enable scoobybot
+     sudo systemctl start scoobybot
+
+8. Vérifier que ça tourne :
+     sudo systemctl status scoobybot
+     journalctl -u scoobybot -f     (pour voir les logs en direct)
+
+Le bot tourne maintenant même si tu éteins ton PC.
+
+
+ALTERNATIVES PLUS SIMPLES (mais moins garanties dans le temps)
+------------------------------------------------------------
+
+1. Hébergeurs dédiés "bot Discord gratuit"
+   Des sites comme bot-hosting.net proposent un plan gratuit limité
+   (RAM réduite, parfois coupure après inactivité). Simple à utiliser
+   (upload du code, pas de ligne de commande), mais les limites et la
+   fiabilité varient beaucoup — à réserver pour tester, pas pour un
+   bot qu'on veut fiable sur la durée.
+
+2. Railway / Render
+   Ces plateformes permettent un déploiement très simple depuis GitHub
+   (connecte le repo, elles installent requirements.txt et lancent
+   bot.py automatiquement). Elles ont eu des offres gratuites par le
+   passé, mais imposent aujourd'hui souvent un plan payant ou un
+   crédit d'essai limité pour un service qui tourne en continu comme
+   un bot Discord. Vérifie l'offre actuelle avant de partir sur cette
+   piste si tu veux du 100% gratuit.
+
+3. Replit + ping externe
+   Méthode "bricolée" historiquement populaire : héberger le bot sur
+   Replit (gratuit) et utiliser un service de ping externe (type
+   UptimeRobot) toutes les 5 minutes pour empêcher le programme de
+   s'endormir. Fonctionne, mais moins stable qu'une vraie VM, et les
+   règles du plan gratuit de Replit changent régulièrement.
+
+
+POINT IMPORTANT : LES DONNÉES DU BOT
+------------------------------------------------------------
+ScoobyBot stocke ses données dans le dossier data/ (warnings.json,
+stats.json, role_menus.json, initialized_channels.json). Sur un
+hébergeur avec un "conteneur éphémère" (redéploiement = disque remis
+à zéro), ces fichiers seraient perdus à chaque mise à jour du bot.
+Une vraie VM (Oracle Cloud, VPS classique) n'a pas ce problème : le
+disque reste intact tant que tu ne supprimes pas la machine.
+
+
+SÉCURITÉ
+------------------------------------------------------------
+Ne mets jamais ton DISCORD_TOKEN dans un fichier commité sur GitHub.
+Il doit rester uniquement dans le fichier .env sur le serveur (déjà
+ignoré par .gitignore dans ce projet). Si le token a été exposé un
+jour, régénère-le immédiatement depuis le portail développeur Discord.

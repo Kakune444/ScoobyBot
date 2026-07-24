@@ -20,7 +20,8 @@ class Blabla(commands.Cog):
 
         text_without_links = URL_RE.sub("", message.content)
         if len(text_without_links) > MIN_LENGTH:
-            await message.channel.send("blablablabla 😴😴😴 RATIO")
+            reply = await message.channel.send("blablablabla 😴😴😴 RATIO")
+            await reply.add_reaction("🔥")
 
 
 async def setup(bot):

@@ -60,4 +60,4 @@ Le suivi des messages et du temps vocal se fait automatiquement en arrière-plan
 
 ## Blabla (`cogs/blabla.py`)
 
-Pas de commande : un écouteur de messages. Si quelqu'un d'autre que `kakune.` envoie un message de plus de 100 caractères (liens exclus du décompte), le bot répond `blablablabla 😴😴😴 RATIO`.
+Pas de commande : un écouteur de messages. Si quelqu'un d'autre que `kakune.` envoie un message de plus de 100 caractères (liens exclus du décompte), le bot répond `blablablabla 😴😴😴 RATIO` et réagit à sa propre réponse avec 🔥.

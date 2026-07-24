@@ -13,7 +13,9 @@ STATS_PATH = os.path.join("data", "stats.json")
 INIT_CHANNELS_PATH = os.path.join("data", "initialized_channels.json")
 
 TIMEZONE = ZoneInfo("Europe/Paris")
-AUTOSAVE_HOURS = range(4, 15)  # toutes les heures de 4h à 14h inclus
+REDUCED_SAVE_WINDOW = (4, 14)  # entre 4h et 14h inclus : sauvegarde toutes les heures
+DEFAULT_SAVE_INTERVAL = 5 * 60  # sinon, toutes les 5 minutes
+REDUCED_SAVE_INTERVAL = 60 * 60
 
 
 def _load_stats():
@@ -58,6 +60,7 @@ class Stats(commands.Cog):
         self.initialized_channels = _load_initialized_channels()
         self.voice_sessions = {}
         self.initializing_guilds = set()
+        self._last_save = time.time()
         self.autosave.start()
 
     def cog_unload(self):
@@ -92,9 +95,16 @@ class Stats(commands.Cog):
 
         return total_serveur, total_salon, total_membre, total_membre_salon
 
-    @tasks.loop(time=[datetime.time(hour=h, tzinfo=TIMEZONE) for h in AUTOSAVE_HOURS])
+    @tasks.loop(minutes=5)
     async def autosave(self):
-        _save_stats(self.data)
+        hour = datetime.datetime.now(TIMEZONE).hour
+        window_start, window_end = REDUCED_SAVE_WINDOW
+        interval = REDUCED_SAVE_INTERVAL if window_start <= hour <= window_end else DEFAULT_SAVE_INTERVAL
+
+        now = time.time()
+        if now - self._last_save >= interval:
+            _save_stats(self.data)
+            self._last_save = now
 
     @autosave.before_loop
     async def before_autosave(self):

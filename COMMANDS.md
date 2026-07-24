@@ -4,18 +4,20 @@ Préfixe par défaut : `!` (configurable via `BOT_PREFIX` dans `.env`).
 
 ## Modération (`cogs/moderation.py`)
 
-| Commande | Permission requise | Description |
-|---|---|---|
-| `!kick <membre> [raison]` | Expulser des membres | Expulse un membre. |
-| `!ban <membre> [raison]` | Bannir des membres | Bannit un membre. |
-| `!unban <user_id>` | Bannir des membres | Débannit un utilisateur via son ID. |
-| `!mute <membre> [minutes=10] [raison]` | Modérer les membres | Met un membre en sourdine (timeout) pour une durée donnée. |
-| `!unmute <membre>` | Modérer les membres | Retire la sourdine d'un membre. |
-| `!warn <membre> [raison]` | Gérer les messages | Ajoute un avertissement. Auto-mute à 3 avertissements, auto-kick à 5. |
-| `!warnings <membre>` | Gérer les messages | Affiche l'historique des avertissements d'un membre. |
-| `!clearwarnings <membre>` | Gérer les messages | Réinitialise les avertissements d'un membre. |
-| `!purge <nombre>` | Gérer les messages | Supprime les `nombre` derniers messages du salon (max 100). |
-| `!slowmode <secondes>` | Gérer les salons | Règle le mode lent du salon (0 pour désactiver, max 21600s). |
+Toutes les commandes de ce cog nécessitent la permission **Administrateur** sur le serveur.
+
+| Commande | Description |
+|---|---|
+| `!kick <membre> [raison]` | Expulse un membre. |
+| `!ban <membre> [raison]` | Bannit un membre. |
+| `!unban <user_id>` | Débannit un utilisateur via son ID. |
+| `!mute <membre> [minutes=10] [raison]` | Met un membre en sourdine (timeout) pour une durée donnée. |
+| `!unmute <membre>` | Retire la sourdine d'un membre. |
+| `!warn <membre> [raison]` | Ajoute un avertissement. Auto-mute à 3 avertissements, auto-kick à 5. |
+| `!warnings <membre>` | Affiche l'historique des avertissements d'un membre. |
+| `!clearwarnings <membre>` | Réinitialise les avertissements d'un membre. |
+| `!purge <nombre>` | Supprime les `nombre` derniers messages du salon (max 100). |
+| `!slowmode <secondes>` | Règle le mode lent du salon (0 pour désactiver, max 21600s). |
 
 ## Rôles (`cogs/roles.py`)
 
@@ -48,4 +50,4 @@ Cliquer sur un bouton du menu ajoute ou retire le rôle correspondant (pas de co
 | `!serverstats` | — | Statistiques globales du serveur (date de création, membres, messages et temps vocal totaux). |
 | `!initialize [#salon]` | Administrateur | Recalcule l'historique des messages depuis le début du serveur (ou d'un seul salon). Protégé contre les doublons : un salon déjà comptabilisé ne peut pas être relancé. |
 
-Le suivi des messages et du temps vocal se fait automatiquement en arrière-plan (pas de commande à lancer), et les données sont sauvegardées toutes les heures entre 4h et 14h (heure de Paris) ainsi qu'à l'arrêt propre du bot.
+Le suivi des messages et du temps vocal se fait automatiquement en arrière-plan (pas de commande à lancer). Sauvegarde toutes les 5 minutes, sauf entre 4h et 14h (heure de Paris) où elle passe à toutes les heures, ainsi qu'à l'arrêt propre du bot.

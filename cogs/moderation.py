@@ -31,22 +31,22 @@ class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def cog_check(self, ctx):
+        return ctx.author.guild_permissions.administrator
+
     @commands.command(name="kick")
-    @commands.has_permissions(kick_members=True)
     @commands.bot_has_permissions(kick_members=True)
     async def kick(self, ctx, member: discord.Member, *, raison: str = "Aucune raison fournie"):
         await member.kick(reason=raison)
         await ctx.send(f"👢 {member.mention} a été expulsé. Raison : {raison}\n💬 *{scooby_quote()}*")
 
     @commands.command(name="ban")
-    @commands.has_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     async def ban(self, ctx, member: discord.Member, *, raison: str = "Aucune raison fournie"):
         await member.ban(reason=raison)
         await ctx.send(f"🔨 {member.mention} a été banni. Raison : {raison}\n💬 *{scooby_quote()}*")
 
     @commands.command(name="unban")
-    @commands.has_permissions(ban_members=True)
     @commands.bot_has_permissions(ban_members=True)
     async def unban(self, ctx, user_id: int):
         user = discord.Object(id=user_id)
@@ -54,22 +54,19 @@ class Moderation(commands.Cog):
         await ctx.send(f"✅ Utilisateur `{user_id}` débanni.\n💬 *{scooby_quote()}*")
 
     @commands.command(name="mute")
-    @commands.has_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     async def mute(self, ctx, member: discord.Member, minutes: int = 10, *, raison: str = "Aucune raison fournie"):
         duration = datetime.timedelta(minutes=minutes)
         await member.timeout(duration, reason=raison)
-        await ctx.send(f"🔇 {member.mention} mute pour {minutes} min. Raison : {raison}\n💬 *{scooby_quote()}*")
+        await ctx.send(f"🔇 Tiens {minutes} minutes de mute dans ta mère {member.mention} ! Raison : {raison}\n💬 *{scooby_quote()}*")
 
     @commands.command(name="unmute")
-    @commands.has_permissions(moderate_members=True)
     @commands.bot_has_permissions(moderate_members=True)
     async def unmute(self, ctx, member: discord.Member):
         await member.timeout(None)
         await ctx.send(f"🔊 {member.mention} n'est plus mute.\n💬 *{scooby_quote()}*")
 
     @commands.command(name="warn")
-    @commands.has_permissions(manage_messages=True)
     async def warn(self, ctx, member: discord.Member, *, raison: str = "Aucune raison fournie"):
         data = _load_warnings()
         guild_id = str(ctx.guild.id)
@@ -99,7 +96,6 @@ class Moderation(commands.Cog):
                 await ctx.send("⚠️ Impossible de mute automatiquement (permissions insuffisantes).")
 
     @commands.command(name="warnings")
-    @commands.has_permissions(manage_messages=True)
     async def warnings_cmd(self, ctx, member: discord.Member):
         data = _load_warnings()
         entries = data.get(str(ctx.guild.id), {}).get(str(member.id), [])
@@ -116,7 +112,6 @@ class Moderation(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="clearwarnings")
-    @commands.has_permissions(manage_messages=True)
     async def clearwarnings(self, ctx, member: discord.Member):
         data = _load_warnings()
         guild_id = str(ctx.guild.id)
@@ -127,7 +122,6 @@ class Moderation(commands.Cog):
         await ctx.send(f"✅ Avertissements de {member.mention} réinitialisés.\n💬 *{scooby_quote()}*")
 
     @commands.command(name="purge")
-    @commands.has_permissions(manage_messages=True)
     @commands.bot_has_permissions(manage_messages=True)
     async def purge(self, ctx, nombre: int):
         nombre = max(1, min(nombre, 100))
@@ -136,7 +130,6 @@ class Moderation(commands.Cog):
         await msg.delete(delay=3)
 
     @commands.command(name="slowmode")
-    @commands.has_permissions(manage_channels=True)
     @commands.bot_has_permissions(manage_channels=True)
     async def slowmode(self, ctx, secondes: int):
         secondes = max(0, min(secondes, 21600))

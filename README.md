@@ -59,7 +59,7 @@ python bot.py
 ## Commandes
 
 ### Modération
-Nécessite les permissions correspondantes sur le serveur (kick/ban/manage_messages/etc.).
+Réservée aux administrateurs du serveur.
 
 - `!kick @membre [raison]` — expulse un membre
 - `!ban @membre [raison]` — bannit un membre
@@ -94,7 +94,7 @@ Format de chaque rôle : `@mention | emoji | label`, séparés par `;`. Ça gén
 
 ### Statistiques
 
-Le suivi des messages et du temps vocal se fait automatiquement, aucune commande à lancer. Sauvegarde automatique toutes les heures entre 4h et 14h (heure de Paris) et à l'arrêt propre du bot.
+Le suivi des messages et du temps vocal se fait automatiquement, aucune commande à lancer. Sauvegarde automatique toutes les 5 minutes, sauf entre 4h et 14h (heure de Paris) où elle passe à toutes les heures, plus une sauvegarde à l'arrêt propre du bot.
 
 - `!stats [@membre]` — messages envoyés + temps en vocal (soi-même par défaut)
 - `!topmessages` — top 10 des plus bavards

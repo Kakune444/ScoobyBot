@@ -20,6 +20,7 @@ INITIAL_EXTENSIONS = (
     "cogs.moderation",
     "cogs.roles",
     "cogs.music",
+    "cogs.stats",
 )
 
 

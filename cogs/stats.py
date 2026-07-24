@@ -1,4 +1,6 @@
+import asyncio
 import datetime
+import io
 import json
 import os
 import time
@@ -6,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import discord
 from discord.ext import commands, tasks
+from PIL import Image, ImageDraw, ImageFont
 
 from cogs.scooby_quotes import scooby_quote
 
@@ -16,6 +19,13 @@ TIMEZONE = ZoneInfo("Europe/Paris")
 REDUCED_SAVE_WINDOW = (4, 14)  # entre 4h et 14h inclus : sauvegarde toutes les heures
 DEFAULT_SAVE_INTERVAL = 5 * 60  # sinon, toutes les 5 minutes
 REDUCED_SAVE_INTERVAL = 60 * 60
+
+CARD_SIZE = (900, 280)
+CARD_BG_COLOR = (23, 43, 43)
+CARD_ACCENT_COLOR = (230, 126, 34)
+CARD_TEXT_COLOR = (255, 255, 255)
+CARD_MUTED_COLOR = (170, 200, 200)
+CARD_AVATAR_SIZE = 200
 
 
 def _load_stats():
@@ -51,6 +61,99 @@ def _format_duration(seconds):
     if hours:
         return f"{hours}h{minutes:02d}"
     return f"{minutes}min"
+
+
+def _circular_avatar(avatar_bytes, size):
+    avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA").resize((size, size))
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+    circular = Image.new("RGBA", (size, size))
+    circular.paste(avatar, (0, 0), mask)
+    return circular
+
+
+def _circular_placeholder(letter, size):
+    placeholder = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(placeholder)
+    draw.ellipse((0, 0, size, size), fill=CARD_ACCENT_COLOR)
+    font = ImageFont.load_default(size=int(size * 0.5))
+    left, top, right, bottom = draw.textbbox((0, 0), letter, font=font)
+    width, height = right - left, bottom - top
+    draw.text(((size - width) / 2 - left, (size - height) / 2 - top), letter, font=font, fill=CARD_TEXT_COLOR)
+    return placeholder
+
+
+def _wrap_text(draw, text, font, max_width):
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if draw.textlength(candidate, font=font) <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _render_card(name, messages, voice_seconds, quote, avatar_bytes):
+    card = Image.new("RGB", CARD_SIZE, CARD_BG_COLOR)
+    draw = ImageDraw.Draw(card)
+    draw.rectangle((0, 0, 14, CARD_SIZE[1]), fill=CARD_ACCENT_COLOR)
+
+    avatar = _circular_avatar(avatar_bytes, CARD_AVATAR_SIZE)
+    card.paste(avatar, (50, 40), avatar)
+
+    text_x = 50 + CARD_AVATAR_SIZE + 30
+    name_font = ImageFont.load_default(size=40)
+    label_font = ImageFont.load_default(size=26)
+    quote_font = ImageFont.load_default(size=22)
+
+    draw.text((text_x, 40), name, font=name_font, fill=CARD_TEXT_COLOR)
+    draw.text((text_x, 100), f"Messages : {messages}", font=label_font, fill=CARD_MUTED_COLOR)
+    draw.text((text_x, 135), f"Temps vocal : {_format_duration(voice_seconds)}", font=label_font, fill=CARD_MUTED_COLOR)
+
+    quote_lines = _wrap_text(draw, f"« {quote} »", quote_font, CARD_SIZE[0] - text_x - 40)
+    y = 185
+    for line in quote_lines[:3]:
+        draw.text((text_x, y), line, font=quote_font, fill=CARD_TEXT_COLOR)
+        y += 30
+
+    buffer = io.BytesIO()
+    card.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
+
+
+def _render_server_card(name, member_count, total_messages, total_voice_seconds, created_str, icon_bytes):
+    card = Image.new("RGB", CARD_SIZE, CARD_BG_COLOR)
+    draw = ImageDraw.Draw(card)
+    draw.rectangle((0, 0, 14, CARD_SIZE[1]), fill=CARD_ACCENT_COLOR)
+
+    if icon_bytes is not None:
+        icon = _circular_avatar(icon_bytes, CARD_AVATAR_SIZE)
+    else:
+        icon = _circular_placeholder((name[:1] or "?").upper(), CARD_AVATAR_SIZE)
+    card.paste(icon, (50, 40), icon)
+
+    text_x = 50 + CARD_AVATAR_SIZE + 30
+    name_font = ImageFont.load_default(size=40)
+    label_font = ImageFont.load_default(size=26)
+
+    draw.text((text_x, 30), name, font=name_font, fill=CARD_TEXT_COLOR)
+    draw.text((text_x, 90), f"Créé le : {created_str}", font=label_font, fill=CARD_MUTED_COLOR)
+    draw.text((text_x, 125), f"Membres : {member_count}", font=label_font, fill=CARD_MUTED_COLOR)
+    draw.text((text_x, 160), f"Messages suivis : {total_messages}", font=label_font, fill=CARD_MUTED_COLOR)
+    draw.text((text_x, 195), f"Temps vocal total : {_format_duration(total_voice_seconds)}", font=label_font, fill=CARD_MUTED_COLOR)
+
+    buffer = io.BytesIO()
+    card.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
 
 
 class Stats(commands.Cog):
@@ -160,6 +263,27 @@ class Stats(commands.Cog):
         )
         await ctx.send(embed=embed)
 
+    @commands.command(name="card")
+    async def card_cmd(self, ctx, member: discord.Member = None):
+        member = member or ctx.author
+        entry = self._entry(ctx.guild.id, member.id)
+        voice_seconds = self._voice_seconds_live(ctx.guild.id, member.id, entry)
+        quote = entry.get("quote") or scooby_quote()
+
+        avatar_bytes = await member.display_avatar.with_size(256).read()
+        buffer = await asyncio.to_thread(
+            _render_card, member.display_name, entry["messages"], voice_seconds, quote, avatar_bytes
+        )
+        await ctx.send(file=discord.File(buffer, filename="card.png"))
+
+    @commands.command(name="setquote")
+    @commands.has_permissions(administrator=True)
+    async def set_quote(self, ctx, member: discord.Member, *, quote: str):
+        entry = self._entry(ctx.guild.id, member.id)
+        entry["quote"] = quote
+        _save_stats(self.data)
+        await ctx.send(f"✅ Citation de {member.mention} mise à jour : « {quote} »\n💬 *{scooby_quote()}*")
+
     @commands.command(name="topmessages")
     async def top_messages(self, ctx):
         guild_data = self.data.get(str(ctx.guild.id), {})
@@ -215,6 +339,28 @@ class Stats(commands.Cog):
         embed.add_field(name="💬 Messages suivis", value=str(total_messages), inline=True)
         embed.add_field(name="🎙️ Temps vocal total", value=_format_duration(total_voice_seconds), inline=True)
         await ctx.send(embed=embed)
+
+    @commands.command(name="servercard")
+    async def server_card_cmd(self, ctx):
+        guild_data = self.data.get(str(ctx.guild.id), {})
+        total_messages = sum(entry["messages"] for entry in guild_data.values())
+        total_voice_seconds = sum(
+            self._voice_seconds_live(ctx.guild.id, user_id, entry)
+            for user_id, entry in guild_data.items()
+        )
+        created_str = ctx.guild.created_at.strftime("%d/%m/%Y")
+        icon_bytes = await ctx.guild.icon.read() if ctx.guild.icon else None
+
+        buffer = await asyncio.to_thread(
+            _render_server_card,
+            ctx.guild.name,
+            ctx.guild.member_count,
+            total_messages,
+            total_voice_seconds,
+            created_str,
+            icon_bytes,
+        )
+        await ctx.send(file=discord.File(buffer, filename="server_card.png"))
 
     @commands.command(name="initialize")
     @commands.has_permissions(administrator=True)

@@ -1,6 +1,6 @@
 # ScoobyBot
 Kakune's Discord Bot
-
+made by Kakune. on Discord 
 # Bot Discord — Modération, Rôles, Musique
 
 Bot Discord tout-en-un : modération façon MEE6, distribution de rôles par bouton (comme Zira), lecteur de musique avec file d'attente, et statistiques serveur/membres façon StatBot. Le bot répond avec des répliques de Scooby-Doo à chaque action.
@@ -10,7 +10,7 @@ Bot Discord tout-en-un : modération façon MEE6, distribution de rôles par bou
 - **Modération** : kick, ban/unban, mute (timeout natif), warn avec sanctions automatiques, purge, slowmode
 - **Rôles** : menu de rôles à récupérer via boutons, persistant après redémarrage du bot
 - **Musique** : lecture depuis YouTube, file d'attente, pause/reprise/skip
-- **Statistiques** : messages et temps vocal suivis par membre et par serveur, classements, recalcul de l'historique complet
+- **Statistiques** : messages et temps vocal suivis par membre et par serveur, classements, recalcul de l'historique complet, carte de membre personnalisable
 
 ---
 
@@ -59,7 +59,7 @@ python bot.py
 ## Commandes
 
 ### Modération
-Réservée aux administrateurs du serveur.
+Nécessite les permissions correspondantes sur le serveur (kick/ban/manage_messages/etc.).
 
 - `!kick @membre [raison]` — expulse un membre
 - `!ban @membre [raison]` — bannit un membre
@@ -97,9 +97,12 @@ Format de chaque rôle : `@mention | emoji | label`, séparés par `;`. Ça gén
 Le suivi des messages et du temps vocal se fait automatiquement, aucune commande à lancer. Sauvegarde automatique toutes les 5 minutes, sauf entre 4h et 14h (heure de Paris) où elle passe à toutes les heures, plus une sauvegarde à l'arrêt propre du bot.
 
 - `!stats [@membre]` — messages envoyés + temps en vocal (soi-même par défaut)
+- `!card [@membre]` — carte de membre en image (photo de profil, stats, citation)
+- `!setquote <membre> <texte>` (administrateur) — définit la citation affichée sur la carte d'un membre
 - `!topmessages` — top 10 des plus bavards
 - `!topvoice` — top 10 du temps passé en vocal
 - `!serverstats` — date de création du serveur, membres, messages et temps vocal totaux
+- `!servercard` — carte du serveur en image (icône, date de création, membres, messages et temps vocal totaux)
 - `!initialize [#salon]` (administrateur) — recalcule tout l'historique des messages depuis le début du serveur, ou d'un seul salon. Protégé contre les doublons (un salon déjà comptabilisé ne peut pas être relancé).
 
 Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COMMANDS.md).

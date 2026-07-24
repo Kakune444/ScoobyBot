@@ -45,9 +45,12 @@ Cliquer sur un bouton du menu ajoute ou retire le rôle correspondant (pas de co
 | Commande | Permission requise | Description |
 |---|---|---|
 | `!stats [@membre]` | — | Affiche le nombre de messages et le temps en vocal d'un membre (soi-même par défaut). |
+| `!card [@membre]` | — | Génère une image "carte de membre" (photo de profil, messages, temps vocal, citation). Sans citation définie, affiche une réplique Scooby-Doo aléatoire. |
+| `!setquote <membre> <texte>` | Administrateur | Définit la citation affichée sur la carte d'un membre. |
 | `!topmessages` | — | Classement des 10 membres les plus actifs en messages. |
 | `!topvoice` | — | Classement des 10 membres avec le plus de temps vocal. |
 | `!serverstats` | — | Statistiques globales du serveur (date de création, membres, messages et temps vocal totaux). |
+| `!servercard` | — | Génère une image "carte du serveur" (icône, date de création, membres, messages et temps vocal totaux). |
 | `!initialize [#salon]` | Administrateur | Recalcule l'historique des messages depuis le début du serveur (ou d'un seul salon). Protégé contre les doublons : un salon déjà comptabilisé ne peut pas être relancé. |
 
 Le suivi des messages et du temps vocal se fait automatiquement en arrière-plan (pas de commande à lancer). Sauvegarde toutes les 5 minutes, sauf entre 4h et 14h (heure de Paris) où elle passe à toutes les heures, ainsi qu'à l'arrêt propre du bot.

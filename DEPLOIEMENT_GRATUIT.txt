@@ -74,6 +74,54 @@ vérifier l'identité (aucun prélèvement sur l'offre gratuite).
 Le bot tourne maintenant même si tu éteins ton PC.
 
 
+MISE À JOUR DU BOT APRÈS UN GIT PUSH
+------------------------------------------------------------
+Avec la VM Oracle Cloud (ou n'importe quel VPS classique), un
+"git push" sur ton repo ne met PAS le bot à jour tout seul. Le
+serveur ne sait pas que tu as poussé du nouveau code tant que
+personne ne va chercher les changements dessus.
+
+Option A — mise à jour manuelle (simple, suffisant si tu ne mets
+à jour que de temps en temps) :
+  1. Connecte-toi en SSH à la VM
+  2. Lance :
+       cd ScoobyBot
+       git pull
+       source venv/bin/activate
+       pip install -r requirements.txt
+       sudo systemctl restart scoobybot
+
+Option B — mise à jour automatique (le serveur vérifie tout seul) :
+Le script scripts/update.sh (déjà dans le repo) fait exactement les
+commandes ci-dessus. Pour qu'il tourne automatiquement toutes les
+10 minutes :
+  1. Rends-le exécutable :
+       chmod +x ~/ScoobyBot/scripts/update.sh
+  2. Autorise le redémarrage du service sans mot de passe (sinon la
+     tâche automatique plantera silencieusement) :
+       sudo visudo
+     Ajoute cette ligne à la fin (remplace "ubuntu" par ton
+     utilisateur si différent) :
+       ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl restart scoobybot
+  3. Ajoute une tâche planifiée :
+       crontab -e
+     Ajoute cette ligne :
+       */10 * * * * /home/ubuntu/ScoobyBot/scripts/update.sh >> /home/ubuntu/scoobybot-update.log 2>&1
+
+À partir de là, chaque "git push" sur la branche que le serveur suit
+sera récupéré et appliqué dans les 10 minutes, sans intervention.
+
+Remarque : cette solution récupère toujours la branche/commit suivi
+localement par le dépôt cloné (en général "main"). Si tu travailles
+sur une autre branche en local, pense à la fusionner ou la pousser
+sur "main" pour que le serveur la voie.
+
+(Sur Railway/Render, ce souci n'existe pas : ces plateformes
+redéploient automatiquement à chaque push GitHub, c'est un des
+principaux avantages par rapport à une VM — voir la section
+ALTERNATIVES ci-dessous.)
+
+
 ALTERNATIVES PLUS SIMPLES (mais moins garanties dans le temps)
 ------------------------------------------------------------
 

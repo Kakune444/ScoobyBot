@@ -57,3 +57,7 @@ Quand un rôle automatique est configuré, il est attribué dès qu'un membre re
 | `!initialize [#salon]` | Administrateur | Recalcule l'historique des messages depuis le début du serveur (ou d'un seul salon). Protégé contre les doublons : un salon déjà comptabilisé ne peut pas être relancé. |
 
 Le suivi des messages et du temps vocal se fait automatiquement en arrière-plan (pas de commande à lancer). Sauvegarde toutes les 5 minutes, sauf entre 4h et 14h (heure de Paris) où elle passe à toutes les heures, ainsi qu'à l'arrêt propre du bot.
+
+## Blabla (`cogs/blabla.py`)
+
+Pas de commande : un écouteur de messages. Si quelqu'un d'autre que `kakune.` envoie un message de plus de 100 caractères (liens exclus du décompte), le bot répond `blablablabla 😴😴😴 RATIO`.

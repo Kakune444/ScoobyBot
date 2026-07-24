@@ -21,6 +21,7 @@ INITIAL_EXTENSIONS = (
     "cogs.roles",
     "cogs.music",
     "cogs.stats",
+    "cogs.blabla",
 )
 
 

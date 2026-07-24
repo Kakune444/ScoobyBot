@@ -3,13 +3,14 @@ Kakune's Discord Bot
 
 # Bot Discord — Modération, Rôles, Musique
 
-Bot Discord tout-en-un : modération façon MEE6, distribution de rôles par bouton (comme Zira), et lecteur de musique avec file d'attente.
+Bot Discord tout-en-un : modération façon MEE6, distribution de rôles par bouton (comme Zira), lecteur de musique avec file d'attente, et statistiques serveur/membres façon StatBot. Le bot répond avec des répliques de Scooby-Doo à chaque action.
 
 ## Fonctionnalités
 
 - **Modération** : kick, ban/unban, mute (timeout natif), warn avec sanctions automatiques, purge, slowmode
 - **Rôles** : menu de rôles à récupérer via boutons, persistant après redémarrage du bot
 - **Musique** : lecture depuis YouTube, file d'attente, pause/reprise/skip
+- **Statistiques** : messages et temps vocal suivis par membre et par serveur, classements, recalcul de l'historique complet
 
 ---
 
@@ -91,22 +92,39 @@ Format de chaque rôle : `@mention | emoji | label`, séparés par `;`. Ça gén
 - `!pause` / `!resume` — pause / reprise
 - `!leave` — quitte le vocal et vide la file
 
+### Statistiques
+
+Le suivi des messages et du temps vocal se fait automatiquement, aucune commande à lancer. Sauvegarde automatique toutes les heures entre 4h et 14h (heure de Paris) et à l'arrêt propre du bot.
+
+- `!stats [@membre]` — messages envoyés + temps en vocal (soi-même par défaut)
+- `!topmessages` — top 10 des plus bavards
+- `!topvoice` — top 10 du temps passé en vocal
+- `!serverstats` — date de création du serveur, membres, messages et temps vocal totaux
+- `!initialize [#salon]` (administrateur) — recalcule tout l'historique des messages depuis le début du serveur, ou d'un seul salon. Protégé contre les doublons (un salon déjà comptabilisé ne peut pas être relancé).
+
+Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COMMANDS.md).
+
 ---
 
 ## Structure du projet
 
 ```
 discordbot/
-├── bot.py                 point d'entrée, charge les cogs
+├── bot.py                     point d'entrée, charge les cogs
 ├── cogs/
-│   ├── moderation.py       kick, ban, mute, warn, purge, slowmode
-│   ├── roles.py            menu de rôles par bouton
-│   └── music.py            lecteur de musique + file d'attente
+│   ├── moderation.py           kick, ban, mute, warn, purge, slowmode
+│   ├── roles.py                menu de rôles par bouton
+│   ├── music.py                lecteur de musique + file d'attente
+│   ├── stats.py                statistiques messages/vocal, initialize
+│   └── scooby_quotes.py        répliques de Scooby-Doo affichées après chaque action
 ├── data/
-│   ├── warnings.json        avertissements par serveur/membre
-│   └── role_menus.json      menus de rôles persistants
+│   ├── warnings.json            avertissements par serveur/membre
+│   ├── role_menus.json          menus de rôles persistants
+│   ├── stats.json               messages/temps vocal par serveur/membre
+│   └── initialized_channels.json  salons déjà comptabilisés par !initialize
 ├── requirements.txt
 ├── .env.example
+├── COMMANDS.md                 référence complète des commandes
 └── README.md
 ```
 
@@ -116,7 +134,9 @@ discordbot/
 
 Le bot doit avoir un rôle placé au-dessus des rôles qu'il distribue ou modère (hiérarchie Discord classique), sinon les actions échouent silencieusement.
 
-Les données (`warnings.json`, `role_menus.json`) sont stockées en fichiers locaux. Sur un hébergeur sans stockage persistant (certains plans Railway/Render en conteneur éphémère), elles seront perdues à chaque redéploiement — prévoir un volume persistant ou migrer vers une vraie base (SQLite/Postgres) si tu veux quelque chose de fiable sur la durée.
+Les données (`warnings.json`, `role_menus.json`, `stats.json`, `initialized_channels.json`) sont stockées en fichiers locaux. Sur un hébergeur sans stockage persistant (certains plans Railway/Render en conteneur éphémère), elles seront perdues à chaque redéploiement — prévoir un volume persistant ou migrer vers une vraie base (SQLite/Postgres) si tu veux quelque chose de fiable sur la durée.
+
+`!initialize` ne peut pas reconstituer le temps vocal passé : Discord ne conserve pas d'historique des présences vocales. Seuls les messages peuvent être recalculés depuis le début du serveur ; le suivi du temps vocal démarre à partir du moment où le bot tourne.
 
 La lecture audio passe par yt-dlp et FFmpeg. Si YouTube change son format d'API, il faudra faire un `pip install -U yt-dlp` régulièrement pour que ça continue de fonctionner.
 

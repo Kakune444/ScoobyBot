@@ -1,0 +1,21 @@
+# Environnement
+.env
+venv/
+.venv/
+
+# Données runtime du bot (générées, propres à chaque déploiement)
+data/*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+CLAUDE.md

@@ -25,8 +25,11 @@ Toutes les commandes de ce cog nécessitent la permission **Administrateur** sur
 |---|---|---|
 | `!rolemenu "Titre" @rôle \| emoji \| label ; ...` | Gérer les rôles | Crée un menu de rôles avec des boutons. |
 | `!rolemenu_delete <message_id>` | Gérer les rôles | Supprime un menu de rôles (message + suivi). |
+| `!autorole [@rôle]` | Gérer les rôles | Définit le rôle donné automatiquement aux nouveaux membres. Sans argument, désactive le rôle automatique. |
 
 Cliquer sur un bouton du menu ajoute ou retire le rôle correspondant (pas de commande, interaction directe).
+
+Quand un rôle automatique est configuré, il est attribué dès qu'un membre rejoint le serveur (`on_member_join`).
 
 ## Musique (`cogs/music.py`)
 

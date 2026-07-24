@@ -8,6 +8,7 @@ from discord.ext import commands
 from cogs.scooby_quotes import scooby_quote
 
 MENUS_PATH = os.path.join("data", "role_menus.json")
+AUTOROLE_PATH = os.path.join("data", "autorole.json")
 
 ROLE_MENTION_RE = re.compile(r"<@&(\d+)>")
 
@@ -22,6 +23,19 @@ def _load_menus():
 def _save_menus(data):
     os.makedirs(os.path.dirname(MENUS_PATH), exist_ok=True)
     with open(MENUS_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _load_autorole():
+    if not os.path.exists(AUTOROLE_PATH):
+        return {}
+    with open(AUTOROLE_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_autorole(data):
+    os.makedirs(os.path.dirname(AUTOROLE_PATH), exist_ok=True)
+    with open(AUTOROLE_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
@@ -40,6 +54,7 @@ def _build_view(roles):
 class Roles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.autorole = _load_autorole()
 
     @commands.command(name="rolemenu")
     @commands.has_permissions(manage_roles=True)
@@ -113,6 +128,36 @@ class Roles(commands.Cog):
         del menus[str(message_id)]
         _save_menus(menus)
         await ctx.send(f"✅ Menu de rôles supprimé.\n💬 *{scooby_quote()}*")
+
+    @commands.command(name="autorole")
+    @commands.has_permissions(manage_roles=True)
+    async def autorole_cmd(self, ctx, role: discord.Role = None):
+        guild_id = str(ctx.guild.id)
+
+        if role is None:
+            self.autorole.pop(guild_id, None)
+            _save_autorole(self.autorole)
+            await ctx.send("✅ Rôle automatique désactivé.")
+            return
+
+        self.autorole[guild_id] = role.id
+        _save_autorole(self.autorole)
+        await ctx.send(f"✅ Les nouveaux membres recevront automatiquement le rôle {role.mention}.")
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member):
+        role_id = self.autorole.get(str(member.guild.id))
+        if role_id is None:
+            return
+
+        role = member.guild.get_role(role_id)
+        if role is None:
+            return
+
+        try:
+            await member.add_roles(role, reason="Rôle automatique à l'arrivée")
+        except discord.Forbidden:
+            pass
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):

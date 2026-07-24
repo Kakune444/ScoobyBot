@@ -8,7 +8,7 @@ Bot Discord tout-en-un : modération façon MEE6, distribution de rôles par bou
 ## Fonctionnalités
 
 - **Modération** : kick, ban/unban, mute (timeout natif), warn avec sanctions automatiques, purge, slowmode
-- **Rôles** : menu de rôles à récupérer via boutons, persistant après redémarrage du bot
+- **Rôles** : menu de rôles à récupérer via boutons (persistant après redémarrage), rôle automatique à l'arrivée d'un membre
 - **Musique** : lecture depuis YouTube, file d'attente, pause/reprise/skip
 - **Statistiques** : messages et temps vocal suivis par membre et par serveur, classements, recalcul de l'historique complet, carte de membre personnalisable
 
@@ -82,6 +82,7 @@ Format de chaque rôle : `@mention | emoji | label`, séparés par `;`. Ça gén
 
 - `!rolemenu "<titre>" @role1 | emoji | label ; ...` — crée le menu
 - `!rolemenu_delete <message_id>` — supprime un menu existant
+- `!autorole [@rôle]` — attribue automatiquement ce rôle à chaque nouveau membre ; sans argument, désactive
 
 ### Musique
 
@@ -123,6 +124,7 @@ discordbot/
 ├── data/
 │   ├── warnings.json            avertissements par serveur/membre
 │   ├── role_menus.json          menus de rôles persistants
+│   ├── autorole.json            rôle automatique par serveur
 │   ├── stats.json               messages/temps vocal par serveur/membre
 │   └── initialized_channels.json  salons déjà comptabilisés par !initialize
 ├── requirements.txt
@@ -137,7 +139,7 @@ discordbot/
 
 Le bot doit avoir un rôle placé au-dessus des rôles qu'il distribue ou modère (hiérarchie Discord classique), sinon les actions échouent silencieusement.
 
-Les données (`warnings.json`, `role_menus.json`, `stats.json`, `initialized_channels.json`) sont stockées en fichiers locaux. Sur un hébergeur sans stockage persistant (certains plans Railway/Render en conteneur éphémère), elles seront perdues à chaque redéploiement — prévoir un volume persistant ou migrer vers une vraie base (SQLite/Postgres) si tu veux quelque chose de fiable sur la durée.
+Les données (`warnings.json`, `role_menus.json`, `autorole.json`, `stats.json`, `initialized_channels.json`) sont stockées en fichiers locaux. Sur un hébergeur sans stockage persistant (certains plans Railway/Render en conteneur éphémère), elles seront perdues à chaque redéploiement — prévoir un volume persistant ou migrer vers une vraie base (SQLite/Postgres) si tu veux quelque chose de fiable sur la durée.
 
 `!initialize` ne peut pas reconstituer le temps vocal passé : Discord ne conserve pas d'historique des présences vocales. Seuls les messages peuvent être recalculés depuis le début du serveur ; le suivi du temps vocal démarre à partir du moment où le bot tourne.
 

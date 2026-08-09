@@ -46,46 +46,77 @@ class Music(commands.Cog):
             return
 
         track = queue.pop(0)
-        source = discord.FFmpegPCMAudio(track["url"], **FFMPEG_OPTIONS)
+
+        try:
+            source = discord.FFmpegPCMAudio(track["url"], **FFMPEG_OPTIONS)
+        except discord.ClientException as e:
+            await channel.send(f"❌ Impossible de lancer **{track['title']}** : {e}")
+            return
 
         def after(error):
             if error:
                 print(f"Erreur de lecture : {error}")
+                asyncio.run_coroutine_threadsafe(
+                    channel.send(f"⚠️ La lecture de **{track['title']}** s'est interrompue : {error}"),
+                    self.bot.loop,
+                )
+
             fut = asyncio.run_coroutine_threadsafe(self._play_next(guild, channel), self.bot.loop)
             try:
                 fut.result()
             except Exception as e:
                 print(f"Erreur après lecture : {e}")
+                asyncio.run_coroutine_threadsafe(
+                    channel.send(f"❌ Erreur lors du passage au morceau suivant : {e}"),
+                    self.bot.loop,
+                )
 
         voice_client.play(source, after=after)
         await channel.send(f"▶️ Lecture : **{track['title']}**\n💬 *{scooby_quote()}*")
 
-    @app_commands.command(name="join", description="Faire rejoindre le bot dans ton salon vocal")
+    @app_commands.command(name="join", description="Faire rejoindre le bot dans un salon vocal")
+    @app_commands.describe(channel="Le salon vocal à rejoindre (par défaut : ton salon vocal actuel)")
     @app_commands.guild_only()
-    async def join(self, interaction: discord.Interaction):
-        if interaction.user.voice is None:
-            await interaction.response.send_message("❌ Tu dois être dans un salon vocal.", ephemeral=True)
+    async def join(self, interaction: discord.Interaction, channel: discord.VoiceChannel = None):
+        if channel is None:
+            if interaction.user.voice is None:
+                await interaction.response.send_message(
+                    "❌ Tu dois être dans un salon vocal, ou préciser le paramètre `channel`.",
+                    ephemeral=True,
+                )
+                return
+            channel = interaction.user.voice.channel
+
+        await interaction.response.defer()
+
+        try:
+            voice_client = interaction.guild.voice_client
+            if voice_client is not None:
+                await voice_client.move_to(channel)
+            else:
+                await channel.connect()
+        except (discord.ClientException, discord.HTTPException, asyncio.TimeoutError) as e:
+            await interaction.followup.send(f"❌ Impossible de rejoindre {channel.mention} : {e}")
             return
 
-        channel = interaction.user.voice.channel
-        voice_client = interaction.guild.voice_client
-        if voice_client is not None:
-            await voice_client.move_to(channel)
-        else:
-            await channel.connect()
-        await interaction.response.send_message(f"✅ Rejoint **{channel.name}**.\n💬 *{scooby_quote()}*")
+        await interaction.followup.send(f"✅ Rejoint **{channel.name}**.\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="play", description="Jouer ou ajouter un morceau à la file d'attente")
     @app_commands.describe(recherche="Titre, artiste ou URL YouTube à jouer")
     @app_commands.guild_only()
     async def play(self, interaction: discord.Interaction, recherche: str):
-        if interaction.guild.voice_client is None:
-            if interaction.user.voice is None:
-                await interaction.response.send_message("❌ Tu dois être dans un salon vocal.", ephemeral=True)
-                return
-            await interaction.user.voice.channel.connect()
+        if interaction.guild.voice_client is None and interaction.user.voice is None:
+            await interaction.response.send_message("❌ Tu dois être dans un salon vocal.", ephemeral=True)
+            return
 
         await interaction.response.defer()
+
+        if interaction.guild.voice_client is None:
+            try:
+                await interaction.user.voice.channel.connect()
+            except (discord.ClientException, discord.HTTPException, asyncio.TimeoutError) as e:
+                await interaction.followup.send(f"❌ Impossible de rejoindre ton salon vocal : {e}")
+                return
 
         try:
             track = await self._extract(recherche)

@@ -97,6 +97,13 @@ class Roles(commands.Cog):
 
             roles_data.append({"role_id": role.id, "emoji": emoji, "label": label})
 
+        if len(roles_data) > 25:
+            await interaction.response.send_message(
+                f"❌ Trop de rôles pour un seul menu : {len(roles_data)} fournis, 25 maximum (limite Discord par message).",
+                ephemeral=True,
+            )
+            return
+
         description = "\n".join(f"{r['emoji']} — <@&{r['role_id']}> ({r['label']})" for r in roles_data)
         embed = discord.Embed(title=titre, description=description, color=discord.Color.blurple())
 

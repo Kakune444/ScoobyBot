@@ -38,7 +38,14 @@ class Moderation(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.bot_has_permissions(kick_members=True)
     async def kick(self, interaction: discord.Interaction, member: discord.Member, raison: str = "Aucune raison fournie"):
-        await member.kick(reason=raison)
+        try:
+            await member.kick(reason=raison)
+        except discord.Forbidden:
+            await interaction.response.send_message(f"❌ Impossible d'expulser {member.mention} : son rôle est trop élevé, ou permissions insuffisantes.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ Échec de l'expulsion de {member.mention} : {e}", ephemeral=True)
+            return
         await interaction.response.send_message(f"👢 {member.mention} a été expulsé. Raison : {raison}\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="ban", description="Bannir un membre du serveur")
@@ -47,7 +54,14 @@ class Moderation(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.bot_has_permissions(ban_members=True)
     async def ban(self, interaction: discord.Interaction, member: discord.Member, raison: str = "Aucune raison fournie"):
-        await member.ban(reason=raison)
+        try:
+            await member.ban(reason=raison)
+        except discord.Forbidden:
+            await interaction.response.send_message(f"❌ Impossible de bannir {member.mention} : son rôle est trop élevé, ou permissions insuffisantes.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ Échec du bannissement de {member.mention} : {e}", ephemeral=True)
+            return
         await interaction.response.send_message(f"🔨 {member.mention} a été banni. Raison : {raison}\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="unban", description="Débannir un utilisateur via son ID Discord")
@@ -56,8 +70,20 @@ class Moderation(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.bot_has_permissions(ban_members=True)
     async def unban(self, interaction: discord.Interaction, user_id: str):
-        user = discord.Object(id=int(user_id))
-        await interaction.guild.unban(user)
+        try:
+            user = discord.Object(id=int(user_id))
+        except ValueError:
+            await interaction.response.send_message(f"❌ `{user_id}` n'est pas un ID Discord valide.", ephemeral=True)
+            return
+
+        try:
+            await interaction.guild.unban(user)
+        except discord.NotFound:
+            await interaction.response.send_message(f"❌ Aucun bannissement trouvé pour l'ID `{user_id}`.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ Échec du débannissement de `{user_id}` : {e}", ephemeral=True)
+            return
         await interaction.response.send_message(f"✅ Utilisateur `{user_id}` débanni.\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="mute", description="Mute temporairement un membre (timeout)")
@@ -67,7 +93,14 @@ class Moderation(commands.Cog):
     @app_commands.checks.bot_has_permissions(moderate_members=True)
     async def mute(self, interaction: discord.Interaction, member: discord.Member, minutes: int = 10, raison: str = "Aucune raison fournie"):
         duration = datetime.timedelta(minutes=minutes)
-        await member.timeout(duration, reason=raison)
+        try:
+            await member.timeout(duration, reason=raison)
+        except discord.Forbidden:
+            await interaction.response.send_message(f"❌ Impossible de mute {member.mention} : son rôle est trop élevé, ou permissions insuffisantes.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ Échec du mute de {member.mention} : {e}", ephemeral=True)
+            return
         await interaction.response.send_message(f"🔇 Tiens {minutes} minutes de mute dans ta mère {member.mention} ! Raison : {raison}\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="unmute", description="Retirer le mute (timeout) d'un membre")
@@ -76,7 +109,14 @@ class Moderation(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.bot_has_permissions(moderate_members=True)
     async def unmute(self, interaction: discord.Interaction, member: discord.Member):
-        await member.timeout(None)
+        try:
+            await member.timeout(None)
+        except discord.Forbidden:
+            await interaction.response.send_message(f"❌ Impossible de démute {member.mention} : permissions insuffisantes.", ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(f"❌ Échec du démute de {member.mention} : {e}", ephemeral=True)
+            return
         await interaction.response.send_message(f"🔊 {member.mention} n'est plus mute.\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="warn", description="Avertir un membre (mute/kick automatique à certains seuils)")

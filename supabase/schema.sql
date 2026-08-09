@@ -229,3 +229,83 @@ CREATE INDEX idx_boosts_guild ON boosts (guild_id, boosted_at);
 CREATE INDEX idx_boosts_open  ON boosts (guild_id, user_id) WHERE unboosted_at IS NULL;
 
 ALTER TABLE boosts ENABLE ROW LEVEL SECURITY;
+
+
+-- ---------------------------------------------------------------------------
+-- touch_member : upsert atomique de `members`, en un seul aller-retour.
+--
+-- Nécessaire car un simple .upsert() côté client écraserait first_message_at
+-- à chaque nouveau message (PostgREST fait un vrai UPSERT — remplace toutes
+-- les colonnes fournies — pas un "set only if null"). Cette fonction porte la
+-- logique "ne renseigner first_message_at qu'une seule fois" côté base,
+-- appelée depuis le bot via client.rpc("touch_member", {...}).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION touch_member(
+    p_guild_id BIGINT,
+    p_user_id BIGINT,
+    p_activity_at TIMESTAMPTZ,
+    p_guild_joined_at TIMESTAMPTZ DEFAULT NULL,
+    p_is_message BOOLEAN DEFAULT false
+) RETURNS void AS $$
+BEGIN
+    INSERT INTO members (guild_id, user_id, first_message_at, guild_joined_at, last_activity_at)
+    VALUES (
+        p_guild_id,
+        p_user_id,
+        CASE WHEN p_is_message THEN p_activity_at ELSE NULL END,
+        p_guild_joined_at,
+        p_activity_at
+    )
+    ON CONFLICT (guild_id, user_id) DO UPDATE SET
+        first_message_at = COALESCE(members.first_message_at, EXCLUDED.first_message_at),
+        guild_joined_at  = COALESCE(EXCLUDED.guild_joined_at, members.guild_joined_at),
+        last_activity_at = p_activity_at;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- ---------------------------------------------------------------------------
+-- voice_seconds_breakdown : durée vocale clampée sur une fenêtre arbitraire,
+-- groupée par (user_id, channel_id). PostgREST ne peut pas exprimer le calcul
+-- LEAST/GREATEST + GROUP BY via le query builder du client — une fonction est
+-- nécessaire. Une seule fonction flexible sert tous les cas des commandes
+-- stats : classement salons vocaux (filtrer sur rien, sommer par channel_id
+-- côté Python), classement membres (sommer par user_id), membres actifs
+-- d'un salon (p_channel_id), salons d'un membre (p_user_id), total d'un
+-- membre (p_user_id, sommer les lignes retournées).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION voice_seconds_breakdown(
+    p_guild_id BIGINT,
+    p_window_start TIMESTAMPTZ,
+    p_window_end TIMESTAMPTZ,
+    p_user_id BIGINT DEFAULT NULL,
+    p_channel_id BIGINT DEFAULT NULL
+) RETURNS TABLE(user_id BIGINT, channel_id BIGINT, seconds DOUBLE PRECISION) AS $$
+    SELECT vs.user_id, vs.channel_id,
+           SUM(EXTRACT(EPOCH FROM (
+               LEAST(COALESCE(vs.left_at, now()), p_window_end) - GREATEST(vs.joined_at, p_window_start)
+           )))
+    FROM voice_sessions vs
+    WHERE vs.guild_id = p_guild_id
+      AND vs.joined_at < p_window_end
+      AND COALESCE(vs.left_at, now()) > p_window_start
+      AND (p_user_id IS NULL OR vs.user_id = p_user_id)
+      AND (p_channel_id IS NULL OR vs.channel_id = p_channel_id)
+    GROUP BY vs.user_id, vs.channel_id;
+$$ LANGUAGE sql STABLE;
+
+
+-- ---------------------------------------------------------------------------
+-- distinct_message_days : jours calendaires distincts (Europe/Paris) où un
+-- membre a envoyé au moins un message — sert au calcul du streak dans
+-- /userstat sans avoir à rapatrier chaque message individuel côté bot.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION distinct_message_days(
+    p_guild_id BIGINT,
+    p_user_id BIGINT
+) RETURNS TABLE(day DATE) AS $$
+    SELECT DISTINCT (created_at AT TIME ZONE 'Europe/Paris')::date AS day
+    FROM messages
+    WHERE guild_id = p_guild_id AND user_id = p_user_id
+    ORDER BY day DESC;
+$$ LANGUAGE sql STABLE;

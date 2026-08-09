@@ -2,4 +2,6 @@ discord.py[voice]>=2.3.2
 python-dotenv>=1.0.0
 yt-dlp>=2024.3.10
 tzdata>=2024.1
-Pillow>=10.1.0
+supabase>=2.10.0
+matplotlib>=3.9.0
+emoji>=2.12.0

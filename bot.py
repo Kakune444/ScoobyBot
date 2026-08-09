@@ -19,13 +19,32 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
+
+class ScoobyCommandTree(app_commands.CommandTree):
+    """Journalise chaque utilisation de commande slash dans Supabase (cogs.stats),
+    avant même les vérifications de permission propres à chaque commande."""
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.type == discord.InteractionType.application_command:
+            stats_cog = self.client.get_cog("Stats")
+            if stats_cog is not None:
+                await stats_cog.log_command_usage(interaction)
+        return True
+
+
+bot = commands.Bot(
+    command_prefix=commands.when_mentioned,
+    intents=intents,
+    help_command=None,
+    tree_cls=ScoobyCommandTree,
+)
 
 INITIAL_EXTENSIONS = (
     "cogs.moderation",
     "cogs.roles",
     "cogs.music",
     "cogs.stats",
+    "cogs.statcommands",
     "cogs.blabla",
 )
 

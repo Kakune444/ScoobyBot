@@ -1,16 +1,16 @@
 # ScoobyBot
 Kakune's Discord Bot
 made by Kakune. on Discord 
-# Bot Discord — Modération, Rôles, Musique
+# Bot Discord — Modération, Rôles, Musique, Statistiques
 
-Bot Discord tout-en-un : modération façon MEE6, distribution de rôles par bouton (comme Zira), lecteur de musique avec file d'attente, et statistiques serveur/membres façon StatBot. Le bot répond avec des répliques de Scooby-Doo à chaque action.
+Bot Discord tout-en-un : modération façon MEE6, distribution de rôles par bouton (comme Zira), lecteur de musique avec file d'attente, et statistiques serveur/membres façon StatBot (mais avec un vrai suivi événementiel en base, pas des compteurs qui se réinitialisent). Le bot répond avec des répliques de Scooby-Doo à chaque action. Toutes les commandes sont des **slash commands** (`/nom`).
 
 ## Fonctionnalités
 
 - **Modération** : kick, ban/unban, mute (timeout natif), warn avec sanctions automatiques, purge, slowmode
 - **Rôles** : menu de rôles à récupérer via boutons (persistant après redémarrage), rôle automatique à l'arrivée d'un membre
-- **Musique** : lecture depuis YouTube, file d'attente, pause/reprise/skip
-- **Statistiques** : messages et temps vocal suivis par membre et par serveur, classements, recalcul de l'historique complet, carte de membre personnalisable
+- **Musique** : lecture depuis YouTube, file d'attente, pause/reprise/skip, déconnexion automatique après 10 min d'inactivité
+- **Statistiques** : messages, sessions vocales, réactions, invitations, boosts et commandes suivis événement par événement dans Supabase — classements et graphiques sur 7 jours / 30 jours / tout l'historique via `/serverstat`, `/userstat`, `/channelstat`
 
 ---
 
@@ -19,12 +19,13 @@ Bot Discord tout-en-un : modération façon MEE6, distribution de rôles par bou
 ### Prérequis
 - Python 3.10+
 - FFmpeg installé et accessible dans le PATH (`ffmpeg -version` pour vérifier)
+- Un projet [Supabase](https://supabase.com) (gratuit) pour les statistiques
 
 ### Étapes
 
 ```bash
 git clone <ton-repo>
-cd discordbot
+cd ScoobyBot
 pip install -r requirements.txt
 ```
 
@@ -32,11 +33,13 @@ Crée ton fichier de config :
 ```bash
 cp .env.example .env
 ```
-Puis édite `.env` :
-```
-DISCORD_TOKEN=colle_ton_token_ici
-BOT_PREFIX=!
-```
+Puis édite `.env` avec ton token Discord et tes identifiants Supabase (voir section suivante).
+
+### Configurer Supabase
+
+1. Crée un projet sur [supabase.com](https://supabase.com)
+2. Dans le SQL Editor du projet, colle le contenu de [`supabase/schema.sql`](./supabase/schema.sql) et exécute-le (une seule fois) — ça crée les tables et fonctions nécessaires aux stats
+3. Dans Project Settings > API, récupère l'**URL du projet** (`SUPABASE_URL`) et la clé **`service_role`** (`SUPABASE_KEY`) — surtout pas la clé `anon`/publique, la `service_role` a le même niveau de sensibilité que `DISCORD_TOKEN` et ne doit jamais être commitée ni exposée côté client
 
 ### Créer et configurer le bot sur Discord
 
@@ -44,9 +47,11 @@ BOT_PREFIX=!
 2. Onglet Bot → Add Bot → copie le token dans `.env`
 3. Active ces deux intents privilégiés dans l'onglet Bot : `SERVER MEMBERS INTENT` et `MESSAGE CONTENT INTENT`
 4. Onglet OAuth2 → URL Generator :
-   - Scopes : `bot`
-   - Permissions : Kick Members, Ban Members, Moderate Members, Manage Messages, Manage Roles, Manage Channels, Connect, Speak, Send Messages, Embed Links, Read Message History
+   - Scopes : `bot`, `applications.commands`
+   - Permissions : Kick Members, Ban Members, Moderate Members, Manage Messages, Manage Roles, Manage Channels, **Manage Server** (nécessaire pour attribuer les invitations utilisées aux nouveaux membres), Connect, Speak, Send Messages, Embed Links, Read Message History
 5. Ouvre l'URL générée et invite le bot sur ton serveur
+
+Si le bot est déjà présent sur un serveur, la permission **Manage Server** doit être réattribuée manuellement à son rôle (changer l'URL OAuth2 ne rétroagit pas sur une invitation déjà acceptée).
 
 ### Lancer
 
@@ -54,59 +59,58 @@ BOT_PREFIX=!
 python bot.py
 ```
 
+Au démarrage, le bot synchronise ses slash commands sur le serveur de dev défini par `DEV_GUILD_ID` dans `bot.py` (propagation quasi instantanée) ; le sync global pour tous les serveurs est en commentaire dans `bot.py`, à activer quand les commandes sont stables.
+
 ---
 
 ## Commandes
 
 ### Modération
-Nécessite les permissions correspondantes sur le serveur (kick/ban/manage_messages/etc.).
+Visibles par défaut aux membres avec la permission Administrateur.
 
-- `!kick @membre [raison]` — expulse un membre
-- `!ban @membre [raison]` — bannit un membre
-- `!unban <id>` — débannit via son ID
-- `!mute @membre [minutes] [raison]` — timeout natif Discord (défaut : 10 min)
-- `!unmute @membre` — retire le timeout
-- `!warn @membre [raison]` — avertit un membre. 3 warns = mute auto 1h, 5 warns = kick auto
-- `!warnings @membre` — liste les avertissements d'un membre
-- `!clearwarnings @membre` — réinitialise les avertissements
-- `!purge <nombre>` — supprime N messages (max 100)
-- `!slowmode <secondes>` — configure le slowmode du salon
+- `/kick <membre> [raison]` — expulse un membre
+- `/ban <membre> [raison]` — bannit un membre
+- `/unban <id>` — débannit via son ID
+- `/mute <membre> [minutes] [raison]` — timeout natif Discord (défaut : 10 min)
+- `/unmute <membre>` — retire le timeout
+- `/warn <membre> [raison]` — avertit un membre. 3 warns = mute auto 1h, 5 warns = kick auto
+- `/warnings <membre>` — liste les avertissements d'un membre
+- `/clearwarnings <membre>` — réinitialise les avertissements
+- `/purge <nombre>` — supprime N messages (max 100)
+- `/slowmode <secondes>` — configure le slowmode du salon
 
 ### Rôles par bouton
 
 ```
-!rolemenu "Choisis ton rôle" @Gamer | 🎮 | Gamer ; @Artiste | 🎨 | Artiste
+/rolemenu contenu:"Choisis ton rôle" @Gamer | 🎮 | Gamer ; @Artiste | 🎨 | Artiste
 ```
 
 Format de chaque rôle : `@mention | emoji | label`, séparés par `;`. Ça génère un embed avec un bouton par rôle — clic pour ajouter, reclic pour retirer.
 
-- `!rolemenu "<titre>" @role1 | emoji | label ; ...` — crée le menu
-- `!rolemenu_delete <message_id>` — supprime un menu existant
-- `!autorole [@rôle]` — attribue automatiquement ce rôle à chaque nouveau membre ; sans argument, désactive
+- `/rolemenu <contenu>` — crée le menu
+- `/rolemenu_delete <message_id>` — supprime un menu existant
+- `/autorole [role]` — attribue automatiquement ce rôle à chaque nouveau membre ; sans argument, désactive
 
 ### Musique
 
-- `!join` — rejoint ton salon vocal
-- `!play <recherche ou lien>` — cherche sur YouTube et joue (ou ajoute à la file si déjà en lecture)
-- `!queue` — affiche la file d'attente
-- `!skip` — passe au morceau suivant
-- `!pause` / `!resume` — pause / reprise
-- `!leave` — quitte le vocal et vide la file
+- `/join [channel]` — rejoint ton salon vocal, ou celui précisé
+- `/play <recherche ou lien>` — cherche sur YouTube et joue (ou ajoute à la file si déjà en lecture)
+- `/queue` — affiche la file d'attente
+- `/skip` — passe au morceau suivant
+- `/pause` / `/resume` — pause / reprise
+- `/leave` — quitte le vocal et vide la file
 
 Le bot quitte automatiquement le vocal après 10 minutes sans rien en lecture (pause comprise), que le salon soit vide ou non.
 
 ### Statistiques
 
-Le suivi des messages et du temps vocal se fait automatiquement, aucune commande à lancer. Sauvegarde automatique toutes les 5 minutes, sauf entre 4h et 14h (heure de Paris) où elle passe à toutes les heures, plus une sauvegarde à l'arrêt propre du bot.
+Le suivi (messages, vocal, réactions, invitations, boosts, commandes) se fait automatiquement en arrière-plan et s'écrit dans Supabase événement par événement — aucune commande à lancer pour l'alimenter, et les commandes ci-dessous lisent directement Supabase sans jamais rescanner l'historique Discord.
 
-- `!stats [@membre]` — messages envoyés + temps en vocal (soi-même par défaut)
-- `!card [@membre]` — carte de membre en image (photo de profil, stats, citation)
-- `!setquote <membre> <texte>` (administrateur) — définit la citation affichée sur la carte d'un membre
-- `!topmessages` — top 10 des plus bavards
-- `!topvoice` — top 10 du temps passé en vocal
-- `!serverstats` — date de création du serveur, membres, messages et temps vocal totaux
-- `!servercard` — carte du serveur en image (icône, date de création, membres, messages et temps vocal totaux)
-- `!initialize [#salon]` (administrateur) — recalcule tout l'historique des messages depuis le début du serveur, ou d'un seul salon. Protégé contre les doublons (un salon déjà comptabilisé ne peut pas être relancé).
+- `/serverstat [periode]` — vue d'ensemble du serveur : messages/vocal 7j-30j-Tout, classements salons et membres, contributeurs actifs, membres les plus réactifs, jour le plus actif, dates clés, graphiques d'activité
+- `/userstat [membre] [periode]` — vue d'ensemble d'un membre : messages/vocal, classement serveur, salons préférés, streak, emojis favoris, dates, graphiques
+- `/channelstat [salon] [periode]` — vue d'ensemble d'un salon (texte ou vocal) : activité, top membres, graphique dans le temps
+
+`periode` (`7 jours` / `30 jours` / `Tout`, défaut 30 jours) filtre les classements et graphiques ; les totaux 7j/30j/Tout en tête d'embed restent toujours affichés ensemble.
 
 Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COMMANDS.md).
 
@@ -115,20 +119,23 @@ Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COM
 ## Structure du projet
 
 ```
-discordbot/
-├── bot.py                     point d'entrée, charge les cogs
+ScoobyBot/
+├── bot.py                     point d'entrée, charge les cogs, sync des slash commands
+├── supabase_client.py         client Supabase (lecture/écriture) partagé par les cogs
+├── supabase/
+│   └── schema.sql              schéma complet (tables + fonctions) à exécuter une fois sur le projet Supabase
 ├── cogs/
 │   ├── moderation.py           kick, ban, mute, warn, purge, slowmode
 │   ├── roles.py                menu de rôles par bouton
-│   ├── music.py                lecteur de musique + file d'attente
-│   ├── stats.py                statistiques messages/vocal, initialize
+│   ├── music.py                lecteur de musique + file d'attente + auto-disconnect
+│   ├── stats.py                capture des événements (messages, vocal, réactions, invitations, boosts) → Supabase
+│   ├── statcommands.py         /serverstat /userstat /channelstat — lecture Supabase + graphiques
+│   ├── blabla.py                réponse automatique aux pavés de texte
 │   └── scooby_quotes.py        répliques de Scooby-Doo affichées après chaque action
 ├── data/
 │   ├── warnings.json            avertissements par serveur/membre
 │   ├── role_menus.json          menus de rôles persistants
-│   ├── autorole.json            rôle automatique par serveur
-│   ├── stats.json               messages/temps vocal par serveur/membre
-│   └── initialized_channels.json  salons déjà comptabilisés par !initialize
+│   └── autorole.json            rôle automatique par serveur
 ├── requirements.txt
 ├── .env.example
 ├── COMMANDS.md                 référence complète des commandes
@@ -139,11 +146,11 @@ discordbot/
 
 ## Notes et limites
 
-Le bot doit avoir un rôle placé au-dessus des rôles qu'il distribue ou modère (hiérarchie Discord classique), sinon les actions échouent silencieusement.
+Le bot doit avoir un rôle placé au-dessus des rôles qu'il distribue ou modère (hiérarchie Discord classique), sinon les actions échouent — les commandes de modération renvoient désormais un message d'erreur explicite dans ce cas plutôt que d'échouer silencieusement.
 
-Les données (`warnings.json`, `role_menus.json`, `autorole.json`, `stats.json`, `initialized_channels.json`) sont stockées en fichiers locaux. Sur un hébergeur sans stockage persistant (certains plans Railway/Render en conteneur éphémère), elles seront perdues à chaque redéploiement — prévoir un volume persistant ou migrer vers une vraie base (SQLite/Postgres) si tu veux quelque chose de fiable sur la durée.
+Les stats vivent dans Supabase (Postgres durable) : elles survivent aux redéploiements, contrairement à l'ancien système en fichier JSON. Le suivi démarre au moment où ce système est déployé — pas de recalcul de l'historique antérieur.
 
-`!initialize` ne peut pas reconstituer le temps vocal passé : Discord ne conserve pas d'historique des présences vocales. Seuls les messages peuvent être recalculés depuis le début du serveur ; le suivi du temps vocal démarre à partir du moment où le bot tourne.
+**Risque résiduel** : `warnings.json`, `role_menus.json` et `autorole.json` restent stockés en fichiers locaux dans `data/`. Sur un hébergeur à conteneur éphémère (Railway sans volume persistant, par exemple), ils seraient perdus à chaque redéploiement — à garder en tête si tu veux les rendre aussi durables que les stats.
 
 La lecture audio passe par yt-dlp et FFmpeg. Si YouTube change son format d'API, il faudra faire un `pip install -U yt-dlp` régulièrement pour que ça continue de fonctionner.
 
@@ -152,7 +159,5 @@ Pour un usage 24/7, héberge sur un VPS, Railway, Render, ou un Raspberry Pi qui
 ## Hébergement
 
 - **VPS** (OVH, Hetzner...) : contrôle total, un service systemd ou une session screen/tmux suffit
-- **Railway / Render** : déploiement simple depuis GitHub, attention au stockage éphémère
+- **Railway / Render** : déploiement simple depuis GitHub (ce projet inclut `railpack.json` pour Railway, qui installe notamment FFmpeg au build)
 - **Docker** : possible d'ajouter un Dockerfile si besoin
-
-Pour héberger gratuitement sans passer par ton PC : voir [`DEPLOIEMENT_GRATUIT.txt`](./DEPLOIEMENT_GRATUIT.txt).

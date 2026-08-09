@@ -1,109 +1,186 @@
-"""Moteur de layout pour les cards stats (PIL) — un seul PNG par commande,
-au lieu d'un embed + des graphiques envoyés séparément.
+"""Rendu des cards stats (PIL) — réplique du layout Statbot en 1280×708.
 
-Rendu en 2x puis downscale (anti-aliasing gratuit sur les coins arrondis et
-le texte), palette reprise du skill dataviz (references/palette.md).
-
-Aucun emoji Unicode n'est dessiné dans l'image : DejaVu Sans (la police
-embarquée par matplotlib, réutilisée ici pour un rendu identique partout)
-ne contient pas les glyphes emoji modernes et les afficherait en tofu. Les
-émojis restent réservés au texte de message Discord (rendu nativement par
-le client), jamais à l'intérieur du PNG.
+- Rendu en 2x puis downscale (anti-aliasing gratuit sur les coins arrondis et le texte).
+- Polices DejaVu embarquées par matplotlib (rendu identique en local et sur Railway).
+- Emojis : DejaVu n'a aucun glyphe emoji (d'où les carrés vides "tofu" de
+  l'ancienne version). Chaque emoji est donc rendu comme une petite image
+  Twemoji téléchargée depuis le CDN jsDelivr au premier usage puis cachée en
+  mémoire pour toute la vie du process. Les icônes de section (trophée,
+  haut-parleur, graphique, manette) sont ces mêmes images passées en
+  silhouette grise pour matcher le style monochrome de la référence.
+  Sans réseau, l'emoji est simplement omis — jamais de carré vide.
 """
 
 import io
 import os
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Optional
 
-import matplotlib
-
-matplotlib.use("Agg")  # doit précéder l'import de pyplot : pas de serveur d'affichage sur Railway
-import matplotlib.pyplot as plt
+import aiohttp
+import emoji as emoji_lib
+import matplotlib  # uniquement pour ses polices DejaVu embarquées
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-SCALE = 2  # facteur de sur-échantillonnage
+SCALE = 2
+CARD_W, CARD_H = 1280, 708
 
-PAGE_BG_HEX = "#0d0d0d"
-CARD_SURFACE_HEX = "#1a1a19"
-CHIP_FILL_HEX = "#383835"
-GRIDLINE_HEX = "#2c2c2a"
-BASELINE_HEX = "#383835"
-INK_PRIMARY_HEX = "#ffffff"
-INK_SECONDARY_HEX = "#c3c2b7"
-INK_MUTED_HEX = "#898781"
-SERIES_MESSAGES_HEX = "#3987e5"
-SERIES_VOICE_HEX = "#d95926"
+# Couleurs relevées sur la card de référence
+PAGE_BG = (33, 34, 38, 255)
+BLOCK_BG = (46, 48, 53, 255)
+ROW_DARK = (35, 36, 40, 255)     # segment label (1j, Message…) et pastilles de noms
+ROW_LIGHT = (56, 58, 64, 255)    # segment valeur
+BADGE_LABEL_BG = (64, 66, 72, 255)
+INK = (255, 255, 255, 255)
+INK_SOFT = (185, 187, 190, 255)
+INK_MUTED = (150, 152, 158, 255)
+ICON_TINT = (181, 186, 193, 255)
+SERIES_MESSAGES = (62, 196, 109, 255)  # vert « Message »
+SERIES_VOICE = (236, 95, 163, 255)     # rose « Vocale »
 
+ICON_TROPHY = "🏆"
+ICON_VOICE = "🔊"
+ICON_CHART = "📈"
+ICON_GAME = "🎮"
+_ICON_EMOJIS = (ICON_TROPHY, ICON_VOICE, ICON_CHART, ICON_GAME)
 
-def _hex_to_rgba(value: str, alpha: int = 255) -> tuple:
-    value = value.lstrip("#")
-    r, g, b = int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
-    return (r, g, b, alpha)
-
-
-PAGE_BG = _hex_to_rgba(PAGE_BG_HEX)
-CARD_SURFACE = _hex_to_rgba(CARD_SURFACE_HEX)
-CHIP_FILL = _hex_to_rgba(CHIP_FILL_HEX)
-INK_PRIMARY = _hex_to_rgba(INK_PRIMARY_HEX)
-INK_SECONDARY = _hex_to_rgba(INK_SECONDARY_HEX)
-INK_MUTED = _hex_to_rgba(INK_MUTED_HEX)
-CARD_BORDER = (255, 255, 255, 26)  # rgba(255,255,255,0.10)
-
-CANVAS_WIDTH = 1480
-OUTER_PAD = 48
-GAP = 24
-CONTENT_WIDTH = CANVAS_WIDTH - 2 * OUTER_PAD
+TWEMOJI_BASE = "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/"
+_EMOJI_CACHE: dict[str, Optional[Image.Image]] = {}
 
 
 def _s(n: float) -> int:
     return round(n * SCALE)
 
 
-def split_width(width: float, n: int, gap: float = GAP) -> float:
-    """Largeur (logique) de n panneaux égaux côte à côte sur `width`."""
-    return (width - gap * (n - 1)) / n
-
-
 _FONT_CACHE: dict = {}
+_FONT_FILES = {
+    "regular": "DejaVuSans.ttf",
+    "bold": "DejaVuSans-Bold.ttf",
+    "italic": "DejaVuSans-Oblique.ttf",
+}
 
 
-def _font(bold: bool, size: int) -> ImageFont.FreeTypeFont:
-    key = (bold, size)
+def _font(style: str, size: int) -> ImageFont.FreeTypeFont:
+    key = (style, size)
     if key not in _FONT_CACHE:
-        name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
-        path = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", name)
+        path = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", _FONT_FILES[style])
         _FONT_CACHE[key] = ImageFont.truetype(path, _s(size))
     return _FONT_CACHE[key]
 
 
-def _truncate(text: str, font: ImageFont.FreeTypeFont, max_width: int, draw: ImageDraw.ImageDraw) -> str:
-    if draw.textlength(text, font=font) <= max_width:
+# ---------------------------------------------------------------------------
+# Emojis (Twemoji)
+# ---------------------------------------------------------------------------
+
+def collect_emojis(*texts: str) -> set[str]:
+    """Tous les emojis présents dans les textes donnés + les icônes de section."""
+    chars = set(_ICON_EMOJIS)
+    for text in texts:
+        if text:
+            chars.update(span["emoji"] for span in emoji_lib.emoji_list(text))
+    return chars
+
+
+def _twemoji_codes(char: str) -> list[str]:
+    # Convention twemoji : le sélecteur de variation FE0F est absent du nom de
+    # fichier dans la plupart des cas — on tente sans, puis avec.
+    full = "-".join(f"{ord(c):x}" for c in char)
+    without_vs = "-".join(f"{ord(c):x}" for c in char if ord(c) != 0xFE0F)
+    return [full] if full == without_vs else [without_vs, full]
+
+
+async def fetch_emoji_images(chars: set[str]) -> dict[str, Image.Image]:
+    """Télécharge (et cache en mémoire) les PNG Twemoji des emojis demandés.
+    Un emoji introuvable ou un échec réseau est caché comme None : il sera
+    simplement omis du rendu."""
+    missing = [c for c in chars if c not in _EMOJI_CACHE]
+    if missing:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for char in missing:
+                image = None
+                for code in _twemoji_codes(char):
+                    try:
+                        async with session.get(f"{TWEMOJI_BASE}{code}.png") as resp:
+                            if resp.status == 200:
+                                data = await resp.read()
+                                image = Image.open(io.BytesIO(data)).convert("RGBA")
+                                break
+                    except (aiohttp.ClientError, OSError):
+                        pass
+                _EMOJI_CACHE[char] = image
+    return {c: _EMOJI_CACHE[c] for c in chars if _EMOJI_CACHE.get(c) is not None}
+
+
+def _segments(text: str) -> list[tuple[str, str]]:
+    """Découpe un texte en [("text", ...) | ("emoji", ...)]."""
+    spans = emoji_lib.emoji_list(text)
+    out, pos = [], 0
+    for span in spans:
+        if span["match_start"] > pos:
+            out.append(("text", text[pos:span["match_start"]]))
+        out.append(("emoji", span["emoji"]))
+        pos = span["match_end"]
+    if pos < len(text):
+        out.append(("text", text[pos:]))
+    return out
+
+
+def _rich_width(draw, text, font, emoji_map, emoji_size) -> float:
+    width = 0.0
+    for kind, val in _segments(text):
+        if kind == "emoji":
+            if val in emoji_map:
+                width += emoji_size + _s(2)
+        else:
+            width += draw.textlength(val, font=font)
+    return width
+
+
+def _truncate_rich(draw, text, font, emoji_map, emoji_size, max_width) -> str:
+    if _rich_width(draw, text, font, emoji_map, emoji_size) <= max_width:
         return text
-    ellipsis = "…"
-    while text and draw.textlength(text + ellipsis, font=font) > max_width:
-        text = text[:-1]
-    return (text + ellipsis) if text else ellipsis
+    ellipsis_w = draw.textlength("…", font=font)
+    out, width = "", 0.0
+    for kind, val in _segments(text):
+        if kind == "emoji":
+            piece = (emoji_size + _s(2)) if val in emoji_map else 0
+            if width + piece + ellipsis_w > max_width:
+                return out + "…"
+            out += val
+            width += piece
+        else:
+            for ch in val:
+                ch_w = draw.textlength(ch, font=font)
+                if width + ch_w + ellipsis_w > max_width:
+                    return out + "…"
+                out += ch
+                width += ch_w
+    return out
 
 
-def _card_surface(width: float, height: float, radius: float = 24, border: bool = True):
-    img = Image.new("RGBA", (_s(width), _s(height)), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    r = _s(radius)
-    draw.rounded_rectangle((0, 0, img.width - 1, img.height - 1), radius=r, fill=CARD_SURFACE)
-    if border:
-        draw.rounded_rectangle((0, 0, img.width - 1, img.height - 1), radius=r, outline=CARD_BORDER, width=max(1, _s(1)))
-    return img, draw
+def draw_rich_text(canvas, draw, x, y_center, text, font, fill, emoji_map, emoji_size) -> float:
+    """Dessine texte + emojis inline à partir de x, centrés verticalement sur
+    y_center. Renvoie le x de fin."""
+    for kind, val in _segments(text):
+        if kind == "emoji":
+            image = emoji_map.get(val)
+            if image is None:
+                continue
+            icon = image.resize((emoji_size, emoji_size), Image.LANCZOS)
+            canvas.alpha_composite(icon, (int(x), int(y_center - emoji_size / 2)))
+            x += emoji_size + _s(2)
+        else:
+            draw.text((x, y_center), val, font=font, fill=fill, anchor="lm")
+            x += draw.textlength(val, font=font)
+    return x
 
 
-def _round_and_border(image: Image.Image, radius: float = 24) -> Image.Image:
-    r = _s(radius)
-    mask = Image.new("L", image.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, image.width - 1, image.height - 1), radius=r, fill=255)
-    out = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    out.paste(image, (0, 0), mask)
-    draw = ImageDraw.Draw(out)
-    draw.rounded_rectangle((0, 0, out.width - 1, out.height - 1), radius=r, outline=CARD_BORDER, width=max(1, _s(1)))
+def _silhouette(image: Image.Image, size: int, tint=ICON_TINT) -> Image.Image:
+    """Icône monochrome : l'alpha du twemoji sert de pochoir, rempli en gris clair."""
+    icon = image.resize((size, size), Image.LANCZOS)
+    solid = Image.new("RGBA", (size, size), tint)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(solid, (0, 0), icon.split()[3])
     return out
 
 
@@ -117,209 +194,298 @@ def _circle_crop(image: Image.Image, diameter: int) -> Image.Image:
 
 
 # ---------------------------------------------------------------------------
-# Blocs de layout
+# Graphique sparkline (pur PIL — pas d'axes, pas de grille)
 # ---------------------------------------------------------------------------
 
-def render_header(width: float, icon_image: Optional[Image.Image], title: str, subtitle_lines: list[str]) -> Image.Image:
-    icon_d = 112
-    pad = 32
-    text_h = 44 + 12 + len(subtitle_lines) * 28
-    height = max(icon_d, text_h) + pad * 2
-    img, draw = _card_surface(width, height)
+def _catmull_rom(points: list[tuple[float, float]], samples: int = 16) -> list[tuple[float, float]]:
+    if len(points) < 3:
+        return points
+    pts = [points[0]] + points + [points[-1]]
+    out = []
+    for i in range(1, len(pts) - 2):
+        p0, p1, p2, p3 = pts[i - 1], pts[i], pts[i + 1], pts[i + 2]
+        for step in range(samples):
+            t = step / samples
+            t2, t3 = t * t, t * t * t
+            x = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t
+                       + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
+                       + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3)
+            y = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t
+                       + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
+                       + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
+            out.append((x, y))
+    out.append(points[-1])
+    return out
 
-    icon_box = _s(icon_d)
-    icon_x = _s(pad)
-    icon_y = (img.height - icon_box) // 2
-    if icon_image is not None:
-        avatar = _circle_crop(icon_image, icon_box)
-        img.alpha_composite(avatar, (icon_x, icon_y))
-    else:
-        draw.ellipse((icon_x, icon_y, icon_x + icon_box, icon_y + icon_box), fill=CHIP_FILL)
-        letter = (title[:1] or "?").upper()
-        draw.text((icon_x + icon_box // 2, icon_y + icon_box // 2), letter, font=_font(True, 48), fill=INK_PRIMARY, anchor="mm")
 
-    text_x = icon_x + icon_box + _s(pad)
-    text_top = (img.height - _s(text_h)) // 2
-    draw.text((text_x, text_top), title, font=_font(True, 44), fill=INK_PRIMARY, anchor="la")
-    y = text_top + _s(44 + 12)
-    for line in subtitle_lines:
-        draw.text((text_x, y), line, font=_font(False, 22), fill=INK_MUTED, anchor="la")
-        y += _s(28)
-    return img
+def _draw_sparkline(canvas, box, series) -> None:
+    """series = [(valeurs, couleur), ...] — chaque série est normalisée
+    indépendamment sur la hauteur du cadre (style Statbot, pas d'axes) et
+    dessinée dans l'ordre (la dernière passe au-dessus)."""
+    x0, y0, x1, y1 = box
+    usable_h = (y1 - y0) - _s(8)
+    for values, color in series:
+        vals = list(values)
+        if not vals:
+            continue
+        if len(vals) == 1:
+            vals = vals * 2
+        peak = max(vals)
+        if peak <= 0:
+            peak = 1
+        n = len(vals)
+        pts = [(x0 + (x1 - x0) * i / (n - 1), y1 - usable_h * (v / peak)) for i, v in enumerate(vals)]
+        smooth = [(px, min(max(py, y0), y1)) for px, py in _catmull_rom(pts)]
+        overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        odraw = ImageDraw.Draw(overlay)
+        odraw.polygon([(x0, y1)] + smooth + [(x1, y1)], fill=color[:3] + (90,))
+        odraw.line(smooth, fill=color, width=_s(3), joint="curve")
+        canvas.alpha_composite(overlay)
 
+
+# ---------------------------------------------------------------------------
+# Données de la card
+# ---------------------------------------------------------------------------
 
 @dataclass
-class StatTile:
-    label: str
-    value: str
-    caption: str
-    secondary: str = ""
+class CardData:
+    avatar: Optional[Image.Image]
+    placeholder_glyph: str            # dessiné dans le cercle si avatar absent
+    title: str
+    title_suffix: str                 # gris, après le titre (ex. le pseudo)
+    subtitle: str                     # ligne 2 du header
+    badges: list                      # [(label, valeur)] × 2
+    rank_title: str                   # "Classement serveur" / "Top membres"
+    rank_rows: list                   # [(label, valeur)] × 2
+    messages_rows: list               # [(label, valeur, unité)] × 3
+    voice_rows: list                  # [(label, valeur, unité)] × 3
+    top_title: str                    # "Top des salons et applications" / "Top des membres"
+    top_rows: list                    # [(icone: "text"|"voice"|"game", nom, valeur, unité)] × 3
+    graph_messages: list
+    graph_voice: list
+    period_label: str                 # "14 derniers jours"
+    rank_icon: str = ICON_TROPHY
+    timezone_label: str = "Europe/Paris"
+    brand_text: str = "Propulsé par ScoobyBot"
+    brand_icon: Optional[Image.Image] = None
 
 
-def render_stat_row(width: float, tiles: list[StatTile], height: float = 170) -> Image.Image:
-    n = len(tiles)
-    tile_w = split_width(width, n)
-    img = Image.new("RGBA", (_s(width), _s(height)), (0, 0, 0, 0))
-    x = 0.0
-    pad = 24
-    for tile in tiles:
-        card, draw = _card_surface(tile_w, height)
-        draw.text((_s(pad), _s(pad)), tile.label.upper(), font=_font(True, 20), fill=INK_SECONDARY, anchor="la")
-        draw.text((_s(pad), _s(64)), tile.value, font=_font(True, 56), fill=INK_PRIMARY, anchor="la")
-        draw.text((_s(pad), _s(128)), tile.caption, font=_font(False, 18), fill=INK_MUTED, anchor="la")
-        if tile.secondary:
-            draw.text((_s(pad), _s(150)), tile.secondary, font=_font(False, 19), fill=INK_SECONDARY, anchor="la")
-        img.alpha_composite(card, (_s(x), 0))
-        x += tile_w + GAP
-    return img
+# ---------------------------------------------------------------------------
+# Blocs
+# ---------------------------------------------------------------------------
+
+def _block_title(canvas, draw, x, y, w, title, icon, emoji_map) -> None:
+    draw.text((_s(x + 18), _s(y + 34)), title, font=_font("bold", 24), fill=INK, anchor="lm")
+    if icon == "#":
+        draw.text((_s(x + w - 18), _s(y + 34)), "#", font=_font("bold", 30), fill=ICON_TINT, anchor="rm")
+    elif icon and emoji_map.get(icon):
+        size = _s(30)
+        canvas.alpha_composite(
+            _silhouette(emoji_map[icon], size),
+            (_s(x + w - 18) - size, _s(y + 34) - size // 2),
+        )
 
 
-def render_ranking_card(width: float, title: str, entries: list[tuple], empty_text: str = "Pas encore de données", max_rows: int = 10) -> Image.Image:
-    entries = entries[:max_rows]
-    header_h = 56
-    row_h = 40
-    pad = 24
-    n_rows = max(len(entries), 1)
-    height = header_h + n_rows * row_h + pad
-    img, draw = _card_surface(width, height)
-    draw.text((_s(pad), _s(pad)), title.upper(), font=_font(True, 22), fill=INK_SECONDARY, anchor="la")
+def _draw_header(canvas, draw, data: CardData, emoji_map) -> None:
+    d = _s(92)
+    if data.avatar is not None:
+        canvas.alpha_composite(_circle_crop(data.avatar, d), (_s(20), _s(12)))
+    else:
+        draw.ellipse((_s(20), _s(12), _s(20) + d, _s(12) + d), fill=BLOCK_BG)
+        draw.text((_s(20) + d // 2, _s(12) + d // 2), data.placeholder_glyph,
+                  font=_font("bold", 40), fill=ICON_TINT, anchor="mm")
 
-    if not entries:
-        cy = _s(header_h) + _s(row_h) // 2
-        draw.text((img.width // 2, cy), empty_text, font=_font(False, 20), fill=INK_MUTED, anchor="mm")
-        return img
+    badge_left = _draw_badges(canvas, draw, data.badges)
 
-    rank_font = _font(True, 20)
-    name_font = _font(False, 22)
-    value_font = _font(True, 22)
-    for i, (name, value) in enumerate(entries, start=1):
-        row_cy = _s(header_h) + _s(row_h) * (i - 1) + _s(row_h) // 2
-        draw.text((_s(pad), row_cy), str(i), font=rank_font, fill=INK_MUTED, anchor="lm")
-        name_x = _s(pad + 36)
-        value_w = draw.textlength(value, font=value_font)
-        max_name_w = img.width - name_x - _s(pad) - int(value_w) - _s(16)
-        shown_name = _truncate(name, name_font, max_name_w, draw)
-        draw.text((name_x, row_cy), shown_name, font=name_font, fill=INK_PRIMARY, anchor="lm")
-        draw.text((img.width - _s(pad), row_cy), value, font=value_font, fill=INK_SECONDARY, anchor="rm")
-    return img
+    x = _s(132)
+    title_font = _font("bold", 40)
+    suffix_font = _font("regular", 26)
+    max_w = badge_left - x - _s(20)
+
+    suffix_w = draw.textlength(data.title_suffix, font=suffix_font) + _s(12) if data.title_suffix else 0
+    title = _truncate_rich(draw, data.title, title_font, emoji_map, _s(46), max_w - suffix_w)
+    end_x = draw_rich_text(canvas, draw, x, _s(46), title, title_font, INK, emoji_map, _s(46))
+    if data.title_suffix:
+        draw.text((end_x + _s(12), _s(52)), data.title_suffix, font=suffix_font, fill=INK_MUTED, anchor="lm")
+
+    sub_font = _font("bold", 22)
+    subtitle = _truncate_rich(draw, data.subtitle, sub_font, emoji_map, _s(26), max_w)
+    draw_rich_text(canvas, draw, x, _s(90), subtitle, sub_font, INK_SOFT, emoji_map, _s(26))
 
 
-def render_chip_row(width: float, title: str, chips: list[str], empty_text: str = "Pas encore de données") -> Image.Image:
-    pad = 24
-    header_h = 40
-    chip_h = 40
-    chip_gap = 12
-    line_gap = 12
-
-    probe = Image.new("RGBA", (10, 10))
-    pdraw = ImageDraw.Draw(probe)
-    font = _font(False, 22)
-    max_line_w = _s(width) - 2 * _s(pad)
-
-    lines: list[list[tuple]] = [[]]
-    line_w = 0
-    for chip in chips:
-        chip_w = int(pdraw.textlength(chip, font=font)) + _s(28)
-        if lines[-1] and line_w + chip_w > max_line_w:
-            lines.append([])
-            line_w = 0
-        lines[-1].append((chip, chip_w))
-        line_w += chip_w + _s(chip_gap)
-
-    n_lines = len(lines) if chips else 1
-    height = header_h + pad + n_lines * chip_h + max(0, n_lines - 1) * line_gap
-    img, draw = _card_surface(width, height)
-    draw.text((_s(pad), _s(pad)), title.upper(), font=_font(True, 22), fill=INK_SECONDARY, anchor="la")
-
-    if not chips:
-        cy = _s(header_h + pad) + _s(chip_h) // 2
-        draw.text((img.width // 2, cy), empty_text, font=_font(False, 20), fill=INK_MUTED, anchor="mm")
-        return img
-
-    y = _s(header_h + pad)
-    for line in lines:
-        x = _s(pad)
-        for chip, chip_w in line:
-            draw.rounded_rectangle((x, y, x + chip_w, y + _s(chip_h)), radius=_s(chip_h / 2), fill=CHIP_FILL)
-            draw.text((x + chip_w / 2, y + _s(chip_h) / 2), chip, font=font, fill=INK_PRIMARY, anchor="mm")
-            x += chip_w + _s(chip_gap)
-        y += _s(chip_h + line_gap)
-    return img
+def _draw_badges(canvas, draw, badges) -> int:
+    """Groupes badge (label au-dessus, valeur en dessous), alignés à droite.
+    Renvoie le x (scalé) du bord gauche occupé, pour borner le titre."""
+    label_font = _font("bold", 19)
+    value_font = _font("bold", 25)
+    right = _s(1260)
+    for label, value in reversed(badges):
+        label_w = draw.textlength(label, font=label_font) + _s(28)
+        value_w = draw.textlength(value, font=value_font) + _s(36)
+        group_w = max(label_w, value_w)
+        gx = right - group_w
+        lx = gx + (group_w - label_w) / 2
+        draw.rounded_rectangle((lx, _s(20), lx + label_w, _s(52)), radius=_s(9), fill=BADGE_LABEL_BG)
+        draw.text((lx + label_w / 2, _s(36)), label, font=label_font, fill=INK, anchor="mm")
+        draw.rounded_rectangle((gx, _s(58), gx + group_w, _s(106)), radius=_s(11), fill=BLOCK_BG)
+        draw.text((gx + group_w / 2, _s(82)), value, font=value_font, fill=INK, anchor="mm")
+        right = gx - _s(22)
+    return int(right)
 
 
-def render_empty_panel(width: float, height: float, text: str = "Pas encore de données sur cette période") -> Image.Image:
-    img, draw = _card_surface(width, height)
-    draw.text((img.width // 2, img.height // 2), text, font=_font(False, 22), fill=INK_MUTED, anchor="mm")
-    return img
+def _draw_rank_block(canvas, draw, x, y, w, h, data: CardData, emoji_map) -> None:
+    draw.rounded_rectangle((_s(x), _s(y), _s(x + w), _s(y + h)), radius=_s(14), fill=BLOCK_BG)
+    _block_title(canvas, draw, x, y, w, data.rank_title, data.rank_icon, emoji_map)
+
+    pad = _s(16)
+    label_w = _s(150)
+    row_h = _s(76)
+    row_y = _s(y + 66)
+    value_font = _font("bold", 25)
+    for label, value in data.rank_rows:
+        left, right = _s(x) + pad, _s(x + w) - pad
+        draw.rounded_rectangle((left, row_y, right, row_y + row_h), radius=_s(11), fill=ROW_LIGHT)
+        draw.rounded_rectangle((left, row_y, left + label_w, row_y + row_h), radius=_s(11), fill=ROW_DARK)
+        draw.text((left + label_w / 2, row_y + row_h / 2), label, font=_font("bold", 25), fill=INK, anchor="mm")
+
+        avail = right - (left + label_w) - _s(24)
+        shown = _truncate_rich(draw, value, value_font, emoji_map, _s(28), avail)
+        shown_w = _rich_width(draw, shown, value_font, emoji_map, _s(28))
+        vx = left + label_w + (right - left - label_w - shown_w) / 2
+        draw_rich_text(canvas, draw, vx, row_y + row_h / 2, shown, value_font, INK, emoji_map, _s(28))
+        row_y += row_h + _s(14)
 
 
-def _style_axes(ax) -> None:
-    ax.set_facecolor(CARD_SURFACE_HEX)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.spines["bottom"].set_visible(True)
-    ax.spines["bottom"].set_color(BASELINE_HEX)
-    ax.tick_params(colors=INK_MUTED_HEX, labelsize=9)
-    ax.set_axisbelow(True)
-    ax.xaxis.grid(False)
+def _draw_stat_block(canvas, draw, x, y, w, h, title, icon, rows, emoji_map) -> None:
+    draw.rounded_rectangle((_s(x), _s(y), _s(x + w), _s(y + h)), radius=_s(14), fill=BLOCK_BG)
+    _block_title(canvas, draw, x, y, w, title, icon, emoji_map)
+
+    pad = _s(16)
+    label_w = _s(70)
+    row_h = _s(52)
+    row_y = _s(y + 64)
+    for label, value, unit in rows:
+        left, right = _s(x) + pad, _s(x + w) - pad
+        draw.rounded_rectangle((left, row_y, right, row_y + row_h), radius=_s(9), fill=ROW_LIGHT)
+        draw.rounded_rectangle((left, row_y, left + label_w, row_y + row_h), radius=_s(9), fill=ROW_DARK)
+        draw.text((left + label_w / 2, row_y + row_h / 2), label, font=_font("bold", 20), fill=INK, anchor="mm")
+        vx = left + label_w + _s(16)
+        draw.text((vx, row_y + row_h / 2), value, font=_font("bold", 24), fill=INK, anchor="lm")
+        vx += draw.textlength(value, font=_font("bold", 24)) + _s(8)
+        draw.text((vx, row_y + row_h / 2), unit, font=_font("italic", 19), fill=INK_SOFT, anchor="lm")
+        row_y += row_h + _s(8)
 
 
-def wrap_chart(width: float, height: float, draw_fn: Callable, radius: float = 24, nrows: int = 1, sharex: bool = False) -> Image.Image:
-    """draw_fn(fig, axes) : trace le contenu (bar/line + titre) sur une liste d'axes déjà stylés
-    (toujours une liste, même pour nrows=1, pour que les tracés multi-panneaux — ex. petits
-    multiples messages/vocal, jamais un double axe Y — utilisent la même signature)."""
-    dpi = 100 * SCALE
-    fig, axes = plt.subplots(nrows, 1, figsize=(width / 100, height / 100), dpi=dpi, sharex=sharex)
-    fig.patch.set_facecolor(CARD_SURFACE_HEX)
-    axes_list = list(axes) if nrows > 1 else [axes]
-    for ax in axes_list:
-        _style_axes(ax)
-    draw_fn(fig, axes_list)
-    fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor=CARD_SURFACE_HEX)
-    plt.close(fig)
-    buf.seek(0)
-    chart = Image.open(buf).convert("RGBA")
-    target = (_s(width), _s(height))
-    if chart.size != target:
-        chart = chart.resize(target, Image.LANCZOS)
-    return _round_and_border(chart, radius)
+def _draw_top_block(canvas, draw, x, y, w, h, data: CardData, emoji_map) -> None:
+    draw.rounded_rectangle((_s(x), _s(y), _s(x + w), _s(y + h)), radius=_s(14), fill=BLOCK_BG)
+    _block_title(canvas, draw, x, y, w, data.top_title, ICON_CHART, emoji_map)
+
+    row_h = _s(50)
+    row_y = _s(y + 68)
+    icon_cx = _s(x + 33)
+    pill_x = _s(x + 60)
+    pill_w = _s(310)
+    name_font = _font("bold", 22)
+    for icon_kind, name, value, unit in data.top_rows:
+        row_cy = row_y + row_h / 2
+        if icon_kind == "text":
+            draw.text((icon_cx, row_cy), "#", font=_font("bold", 26), fill=ICON_TINT, anchor="mm")
+        else:
+            icon_emoji = ICON_VOICE if icon_kind == "voice" else ICON_GAME
+            if emoji_map.get(icon_emoji):
+                size = _s(26)
+                canvas.alpha_composite(
+                    _silhouette(emoji_map[icon_emoji], size),
+                    (int(icon_cx - size / 2), int(row_cy - size / 2)),
+                )
+
+        draw.rounded_rectangle((pill_x, row_y, pill_x + pill_w, row_y + row_h), radius=_s(9), fill=ROW_DARK)
+        if name:
+            shown = _truncate_rich(draw, name, name_font, emoji_map, _s(26), pill_w - _s(28))
+            draw_rich_text(canvas, draw, pill_x + _s(14), row_cy, shown, name_font, INK, emoji_map, _s(26))
+        if value:
+            vx = pill_x + pill_w + _s(18)
+            draw.text((vx, row_cy), value, font=_font("bold", 22), fill=INK, anchor="lm")
+            vx += draw.textlength(value, font=_font("bold", 22)) + _s(8)
+            draw.text((vx, row_cy), unit, font=_font("italic", 19), fill=INK_SOFT, anchor="lm")
+        row_y += row_h + _s(14)
 
 
-def hrow(panels: list[Image.Image]) -> Image.Image:
-    """Empile des panneaux déjà rendus côte à côte, alignés en haut."""
-    gap = _s(GAP)
-    width = sum(p.width for p in panels) + gap * (len(panels) - 1)
-    height = max(p.height for p in panels)
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    x = 0
-    for p in panels:
-        img.alpha_composite(p, (x, 0))
-        x += p.width + gap
-    return img
+def _draw_graph_block(canvas, draw, x, y, w, h, data: CardData, emoji_map) -> None:
+    draw.rounded_rectangle((_s(x), _s(y), _s(x + w), _s(y + h)), radius=_s(14), fill=BLOCK_BG)
+    draw.text((_s(x + 18), _s(y + 34)), "Graphiques", font=_font("bold", 24), fill=INK, anchor="lm")
+
+    # Légende, alignée à droite du titre
+    legend_font = _font("bold", 20)
+    dot = _s(13)
+    items = [("Message", SERIES_MESSAGES), ("Vocale", SERIES_VOICE)]
+    total = sum(dot + _s(8) + draw.textlength(label, font=legend_font) for label, _ in items) + _s(20)
+    lx = _s(x + w - 18) - total
+    ly = _s(y + 34)
+    for label, color in items:
+        draw.ellipse((lx, ly - dot / 2, lx + dot, ly + dot / 2), fill=color)
+        lx += dot + _s(8)
+        draw.text((lx, ly), label, font=legend_font, fill=INK, anchor="lm")
+        lx += draw.textlength(label, font=legend_font) + _s(20)
+
+    box = (_s(x + 16), _s(y + 64), _s(x + w - 16), _s(y + h - 18))
+    _draw_sparkline(canvas, box, [
+        (data.graph_voice, SERIES_VOICE),
+        (data.graph_messages, SERIES_MESSAGES),
+    ])
 
 
-def compose_card(header: Image.Image, body_blocks: list[Image.Image], footer_text: str) -> Image.Image:
-    pad = _s(OUTER_PAD)
-    gap = _s(GAP)
-    footer_h = _s(48)
-    content_w = header.width
-    total_h = pad * 2 + header.height + gap + sum(b.height + gap for b in body_blocks) + footer_h
-    total_w = content_w + pad * 2
+def _draw_footer(canvas, draw, data: CardData) -> None:
+    y = _s(676)
+    bold = _font("bold", 21)
+    regular = _font("regular", 21)
 
-    canvas = Image.new("RGBA", (total_w, total_h), PAGE_BG)
-    canvas.alpha_composite(header, (pad, pad))
-    y = pad + header.height + gap
-    for block in body_blocks:
-        canvas.alpha_composite(block, (pad, y))
-        y += block.height + gap
+    x = _s(24)
+    parts = [
+        ("Période d'analyse: ", bold, INK),
+        (data.period_label, regular, INK_SOFT),
+        (" — ", regular, INK_MUTED),
+        ("Fuseau horaire: ", bold, INK),
+        (data.timezone_label, regular, INK_SOFT),
+    ]
+    for text, font, fill in parts:
+        draw.text((x, y), text, font=font, fill=fill, anchor="lm")
+        x += draw.textlength(text, font=font)
 
+    brand_font = _font("bold", 21)
+    text_w = draw.textlength(data.brand_text, font=brand_font)
+    bx = _s(1256) - text_w
+    draw.text((bx, y), data.brand_text, font=brand_font, fill=INK, anchor="lm")
+    if data.brand_icon is not None:
+        icon_d = _s(30)
+        canvas.alpha_composite(
+            _circle_crop(data.brand_icon, icon_d),
+            (int(bx - icon_d - _s(10)), int(y - icon_d / 2)),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Assemblage
+# ---------------------------------------------------------------------------
+
+def render_card(data: CardData, emoji_map: dict) -> Image.Image:
+    canvas = Image.new("RGBA", (_s(CARD_W), _s(CARD_H)), PAGE_BG)
     draw = ImageDraw.Draw(canvas)
-    draw.text((total_w // 2, total_h - footer_h // 2), footer_text, font=_font(False, 20), fill=INK_MUTED, anchor="mm")
 
-    final_size = (total_w // SCALE, total_h // SCALE)
-    return canvas.convert("RGB").resize(final_size, Image.LANCZOS)
+    _draw_header(canvas, draw, data, emoji_map)
+
+    col_w = (1240 - 2 * 16) / 3
+    xs = [20 + i * (col_w + 16) for i in range(3)]
+    _draw_rank_block(canvas, draw, xs[0], 132, col_w, 245, data, emoji_map)
+    _draw_stat_block(canvas, draw, xs[1], 132, col_w, 245, "Messages", "#", data.messages_rows, emoji_map)
+    _draw_stat_block(canvas, draw, xs[2], 132, col_w, 245, "Activité vocale", ICON_VOICE, data.voice_rows, emoji_map)
+
+    _draw_top_block(canvas, draw, 20, 393, 600, 250, data, emoji_map)
+    _draw_graph_block(canvas, draw, 636, 393, 624, 250, data, emoji_map)
+
+    _draw_footer(canvas, draw, data)
+
+    return canvas.convert("RGB").resize((CARD_W, CARD_H), Image.LANCZOS)
 
 
 def to_discord_file(image: Image.Image, filename: str):

@@ -5,33 +5,18 @@ from typing import Optional, Union
 from zoneinfo import ZoneInfo
 
 import discord
-import emoji
 from discord import app_commands
 from discord.ext import commands
 from PIL import Image
 
 from cardkit import (
-    CONTENT_WIDTH,
-    GRIDLINE_HEX,
-    INK_PRIMARY_HEX,
-    INK_SECONDARY_HEX,
-    SERIES_MESSAGES_HEX,
-    SERIES_VOICE_HEX,
-    StatTile,
-    compose_card,
-    hrow,
-    render_chip_row,
-    render_empty_panel,
-    render_header,
-    render_ranking_card,
-    render_stat_row,
-    split_width,
+    CardData,
+    collect_emojis,
+    fetch_emoji_images,
+    render_card,
     to_discord_file,
-    wrap_chart,
 )
 from supabase_client import (
-    get_distinct_message_days,
-    get_emoji_events,
     get_messages,
     get_voice_seconds_breakdown,
     get_voice_sessions_overlapping,
@@ -39,7 +24,6 @@ from supabase_client import (
 
 PARIS = ZoneInfo("Europe/Paris")
 EPOCH = datetime(2015, 1, 1, tzinfo=timezone.utc)
-WEEKDAY_NAMES = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 MONTHS_FR = [
     "janvier", "février", "mars", "avril", "mai", "juin",
     "juillet", "août", "septembre", "octobre", "novembre", "décembre",
@@ -47,28 +31,38 @@ MONTHS_FR = [
 
 PERIOD_CHOICES = [
     app_commands.Choice(name="7 jours", value="7d"),
+    app_commands.Choice(name="14 jours", value="14d"),
     app_commands.Choice(name="30 jours", value="30d"),
     app_commands.Choice(name="Tout", value="all"),
 ]
-PERIOD_LABELS = {"7d": "7 jours", "30d": "30 jours", "all": "Tout"}
+DEFAULT_PERIOD = "14d"
+PERIOD_DAYS = {"7d": 7, "14d": 14, "30d": 30}
+FOOTER_LABELS = {
+    "7d": "7 derniers jours",
+    "14d": "14 derniers jours",
+    "30d": "30 derniers jours",
+    "all": "Tout l'historique",
+}
+# Les trois sous-fenêtres affichées dans les blocs Messages / Activité vocale,
+# par période (la dernière est toujours la période elle-même).
+SUB_WINDOWS = {
+    "7d": [("1j", 1), ("3j", 3), ("7j", 7)],
+    "14d": [("1j", 1), ("7j", 7), ("14j", 14)],
+    "30d": [("1j", 1), ("7j", 7), ("30j", 30)],
+    "all": [("1j", 1), ("7j", 7), ("Tout", None)],
+}
 
 
-def _window(period: str) -> tuple[datetime, datetime]:
-    end = discord.utils.utcnow()
-    if period == "7d":
-        return end - timedelta(days=7), end
-    if period == "30d":
-        return end - timedelta(days=30), end
-    return EPOCH, end
+def _window(period: str, now: datetime) -> tuple[datetime, datetime]:
+    if period == "all":
+        return EPOCH, now
+    return now - timedelta(days=PERIOD_DAYS[period]), now
 
 
-def _format_duration(seconds: float) -> str:
-    seconds = int(seconds)
-    hours, remainder = divmod(seconds, 3600)
-    minutes = remainder // 60
-    if hours:
-        return f"{hours}h{minutes:02d}"
-    return f"{minutes}min"
+def _format_hours(seconds: float) -> str:
+    hours = seconds / 3600
+    text = f"{hours:.2f}".rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def _format_date_fr(dt: datetime) -> str:
@@ -80,27 +74,14 @@ def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def _text_channel_label(guild: discord.Guild, channel_id: int) -> str:
+def _channel_name(guild: discord.Guild, channel_id: int) -> str:
     channel = guild.get_channel(channel_id)
-    return f"#{channel.name}" if channel else "#salon-supprimé"
+    return channel.name if channel else "salon-supprimé"
 
 
-def _voice_channel_label(guild: discord.Guild, channel_id: int) -> str:
-    channel = guild.get_channel(channel_id)
-    return channel.name if channel else "Salon supprimé"
-
-
-def _member_label(guild: discord.Guild, user_id: int) -> str:
+def _member_name(guild: discord.Guild, user_id: int) -> str:
     member = guild.get_member(user_id)
     return member.display_name if member else f"Utilisateur {user_id}"
-
-
-def _emoji_chip_key(row: dict) -> str:
-    # Aucun glyphe emoji dans l'image (DejaVu Sans n'a pas les caractères emoji modernes) :
-    # on affiche un nom sûr en ASCII — le nom custom Discord, ou le shortcode démojisé.
-    if row["is_custom"]:
-        return f":{row['emoji_name']}:"
-    return emoji.demojize(row["emoji_name"])
 
 
 async def _read_asset(asset: Optional[discord.Asset]) -> Optional[Image.Image]:
@@ -113,29 +94,44 @@ async def _read_asset(asset: Optional[discord.Asset]) -> Optional[Image.Image]:
         return None
 
 
+def _count_since(rows: list[dict], now: datetime, days) -> int:
+    if days is None:
+        return len(rows)
+    cutoff = now - timedelta(days=days)
+    return sum(1 for m in rows if _parse_ts(m["created_at"]) >= cutoff)
+
+
+def _sum_by(rows: list[dict], key: str) -> Counter:
+    totals = Counter()
+    for row in rows:
+        totals[row[key]] += row["seconds"]
+    return totals
+
+
+def _rank_label(counter: Counter, target_id) -> str:
+    for i, (key, value) in enumerate(counter.most_common(), start=1):
+        if key == target_id:
+            return f"#{i}" if value > 0 else "#—"
+    return "#—"
+
+
+def _top_row(icon: str, pairs: list, name_fn, value_fn, unit: str) -> tuple:
+    if not pairs or pairs[0][1] <= 0:
+        return (icon, "", "", "")
+    key, value = pairs[0]
+    return (icon, name_fn(key), value_fn(value), unit)
+
+
 def _bucket_messages(rows: list[dict]) -> dict:
     by_channel = Counter()
     by_user = Counter()
-    by_hour = Counter()
-    by_weekday = Counter()
     by_day = Counter()
     for row in rows:
-        created = _parse_ts(row["created_at"])
-        local = created.astimezone(PARIS)
+        local = _parse_ts(row["created_at"]).astimezone(PARIS)
         by_channel[row["channel_id"]] += 1
         by_user[row["user_id"]] += 1
-        by_hour[local.hour] += 1
-        by_weekday[local.weekday()] += 1
         by_day[local.date()] += 1
-    return {
-        "total": len(rows),
-        "by_channel": by_channel,
-        "by_user": by_user,
-        "by_hour": by_hour,
-        "by_weekday": by_weekday,
-        "by_day": by_day,
-        "active_users": {row["user_id"] for row in rows},
-    }
+    return {"by_channel": by_channel, "by_user": by_user, "by_day": by_day}
 
 
 def _bucket_voice_daily(rows: list[dict], window_start: datetime, window_end: datetime) -> dict:
@@ -157,297 +153,201 @@ def _bucket_voice_daily(rows: list[dict], window_start: datetime, window_end: da
     return daily
 
 
-def _compute_streak(days: list) -> int:
-    if not days:
-        return 0
-    days_set = set(days)
-    today = datetime.now(PARIS).date()
-    if today in days_set:
-        cursor = today
-    elif (today - timedelta(days=1)) in days_set:
-        cursor = today - timedelta(days=1)
+def _daily_series(by_day: Counter, voice_daily: dict, period: str, now: datetime) -> tuple[list, list]:
+    """Deux listes alignées (messages/jour, heures vocales/jour) sur la période."""
+    today = now.astimezone(PARIS).date()
+    if period == "all":
+        all_days = set(by_day) | set(voice_daily)
+        start_day = min(all_days) if all_days else today
     else:
-        return 0
-    streak = 0
-    while cursor in days_set:
-        streak += 1
-        cursor -= timedelta(days=1)
-    return streak
-
-
-def _date_range(days: list) -> list:
-    ordered = sorted(days)
-    return [ordered[0] + timedelta(days=i) for i in range((ordered[-1] - ordered[0]).days + 1)]
-
-
-# ---------------------------------------------------------------------------
-# Graphiques (matplotlib via cardkit.wrap_chart — jamais de double axe Y :
-# deux mesures d'échelles différentes = deux sous-graphiques empilés)
-# ---------------------------------------------------------------------------
-
-def _render_hour_panel(width: float, height: float, hour_counts: Counter, title: str, color: str = SERIES_MESSAGES_HEX):
-    if sum(hour_counts.values()) == 0:
-        return render_empty_panel(width, height)
-
-    def draw(fig, axes):
-        ax = axes[0]
-        hours = list(range(24))
-        values = [hour_counts.get(h, 0) for h in hours]
-        ax.bar(hours, values, color=color, width=0.7)
-        ax.set_xticks(range(0, 24, 6))
-        ax.set_xticklabels([f"{h}h" for h in range(0, 24, 6)])
-        ax.yaxis.grid(True, color=GRIDLINE_HEX, linewidth=1)
-        ax.set_title(title, fontsize=13, loc="left", color=INK_PRIMARY_HEX, pad=12)
-
-    return wrap_chart(width, height, draw)
-
-
-def _render_trend_panel(width: float, height: float, dates: list, values: list, title: str, color: str = SERIES_MESSAGES_HEX):
-    def draw(fig, axes):
-        ax = axes[0]
-        ax.plot(dates, values, color=color, linewidth=2, solid_capstyle="round")
-        ax.fill_between(dates, values, color=color, alpha=0.10)
-        ax.yaxis.grid(True, color=GRIDLINE_HEX, linewidth=1)
-        for tick_label in ax.get_xticklabels():
-            tick_label.set_rotation(30)
-            tick_label.set_ha("right")
-        ax.set_title(title, fontsize=13, loc="left", color=INK_PRIMARY_HEX, pad=12)
-
-    return wrap_chart(width, height, draw)
-
-
-def _render_dual_trend_panel(width: float, height: float, dates: list, messages_values: list, voice_hours_values: list, title: str):
-    def draw(fig, axes):
-        ax1, ax2 = axes
-        for ax, values, color, label in (
-            (ax1, messages_values, SERIES_MESSAGES_HEX, "Messages"),
-            (ax2, voice_hours_values, SERIES_VOICE_HEX, "Heures vocales"),
-        ):
-            ax.plot(dates, values, color=color, linewidth=2, solid_capstyle="round")
-            ax.fill_between(dates, values, color=color, alpha=0.10)
-            ax.yaxis.grid(True, color=GRIDLINE_HEX, linewidth=1)
-            ax.set_ylabel(label, color=INK_SECONDARY_HEX, fontsize=9)
-        for tick_label in ax2.get_xticklabels():
-            tick_label.set_rotation(30)
-            tick_label.set_ha("right")
-        ax1.set_title(title, fontsize=13, loc="left", color=INK_PRIMARY_HEX, pad=12)
-
-    return wrap_chart(width, height, draw, nrows=2, sharex=True)
+        start_day = today - timedelta(days=PERIOD_DAYS[period] - 1)
+    n = (today - start_day).days + 1
+    days = [start_day + timedelta(days=i) for i in range(n)]
+    messages = [by_day.get(d, 0) for d in days]
+    voice = [voice_daily.get(d, 0.0) / 3600 for d in days]
+    return messages, voice
 
 
 class StatCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def _voice_subtotals(self, guild_id: int, now: datetime, period: str, *, user_id=None, channel_id=None):
+        """[(label, rows_breakdown)] pour chaque sous-fenêtre de la période.
+        La dernière sous-fenêtre est la période elle-même — ses rows servent de focus."""
+        out = []
+        for label, days in SUB_WINDOWS[period]:
+            start = EPOCH if days is None else now - timedelta(days=days)
+            rows = await get_voice_seconds_breakdown(
+                guild_id=guild_id, window_start=start, window_end=now, user_id=user_id, channel_id=channel_id,
+            )
+            out.append((label, rows))
+        return out
+
+    async def _brand_icon(self, interaction: discord.Interaction) -> Optional[Image.Image]:
+        user = interaction.client.user
+        return await _read_asset(user.display_avatar) if user else None
+
     # -- /serverstat ----------------------------------------------------------
 
-    @app_commands.command(name="serverstat", description="Statistiques du serveur : messages, vocal, classements, activité")
-    @app_commands.describe(periode="Fenêtre pour les classements et graphiques (les totaux 7j/30j/Tout restent toujours affichés)")
+    @app_commands.command(name="serverstat", description="Statistiques du serveur : messages, vocal, tops, activité")
+    @app_commands.describe(periode="Période d'analyse (14 jours par défaut)")
     @app_commands.choices(periode=PERIOD_CHOICES)
     @app_commands.guild_only()
     async def serverstat(self, interaction: discord.Interaction, periode: app_commands.Choice[str] = None):
-        period = periode.value if periode else "30d"
-        period_label = PERIOD_LABELS[period]
+        period = periode.value if periode else DEFAULT_PERIOD
         await interaction.response.defer()
 
         guild = interaction.guild
         now = discord.utils.utcnow()
+        focus_start, _ = _window(period, now)
 
         all_messages = await get_messages(guild_id=guild.id, window_start=EPOCH, window_end=now)
-        counts_7d = sum(1 for m in all_messages if _parse_ts(m["created_at"]) >= now - timedelta(days=7))
-        counts_30d = sum(1 for m in all_messages if _parse_ts(m["created_at"]) >= now - timedelta(days=30))
-        focus_start, focus_end = _window(period)
-        focus_messages = [m for m in all_messages if focus_start <= _parse_ts(m["created_at"]) < focus_end]
+        focus_messages = [m for m in all_messages if _parse_ts(m["created_at"]) >= focus_start]
         buckets = _bucket_messages(focus_messages)
-        messages_period_value = {"7d": counts_7d, "30d": counts_30d, "all": len(all_messages)}[period]
 
-        voice_7d = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=now - timedelta(days=7), window_end=now)
-        voice_30d = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=now - timedelta(days=30), window_end=now)
-        voice_all = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=EPOCH, window_end=now)
-        voice_focus = {"7d": voice_7d, "30d": voice_30d, "all": voice_all}[period]
-        voice_period_seconds = sum(r["seconds"] for r in voice_focus)
-
-        icon_image = await _read_asset(guild.icon)
-        subtitle = [f"Créé le {_format_date_fr(guild.created_at)}"]
-        if guild.me.joined_at:
-            subtitle.append(f"Bot ajouté le {_format_date_fr(guild.me.joined_at)}")
-        header = render_header(CONTENT_WIDTH, icon_image, guild.name, subtitle)
-
-        weekday_label = WEEKDAY_NAMES[buckets["by_weekday"].most_common(1)[0][0]] if buckets["by_weekday"] else "—"
-        tiles = [
-            StatTile(
-                "Messages", str(messages_period_value), f"({period_label})",
-                f"7j {counts_7d} · 30j {counts_30d} · Tout {len(all_messages)}",
-            ),
-            StatTile(
-                "Heures vocales", _format_duration(voice_period_seconds), f"({period_label})",
-                f"7j {_format_duration(sum(r['seconds'] for r in voice_7d))} · "
-                f"30j {_format_duration(sum(r['seconds'] for r in voice_30d))} · "
-                f"Tout {_format_duration(sum(r['seconds'] for r in voice_all))}",
-            ),
-            StatTile(
-                "Serveur", str(len(buckets["active_users"])), "contributeurs actifs",
-                f"Jour le + actif : {weekday_label}",
-            ),
+        messages_rows = [
+            (label, str(_count_since(all_messages, now, days)), "messages")
+            for label, days in SUB_WINDOWS[period]
         ]
-        stat_row = render_stat_row(CONTENT_WIDTH, tiles)
+        voice_sub = await self._voice_subtotals(guild.id, now, period)
+        voice_rows = [
+            (label, _format_hours(sum(r["seconds"] for r in rows)), "heures")
+            for label, rows in voice_sub
+        ]
+        voice_focus = voice_sub[-1][1]
 
-        text_ranking = [(_text_channel_label(guild, cid), f"{n} messages") for cid, n in buckets["by_channel"].most_common(10)]
-        voice_by_channel = Counter()
-        for row in voice_focus:
-            voice_by_channel[row["channel_id"]] += row["seconds"]
-        voice_ranking = [(_voice_channel_label(guild, cid), _format_duration(s)) for cid, s in voice_by_channel.most_common(10)]
-        channel_row = hrow([
-            render_ranking_card(split_width(CONTENT_WIDTH, 2), "Top salons texte", text_ranking),
-            render_ranking_card(split_width(CONTENT_WIDTH, 2), "Top salons vocaux", voice_ranking),
-        ])
+        top_msg = buckets["by_user"].most_common(1)
+        top_voc = _sum_by(voice_focus, "user_id").most_common(1)
+        rank_rows = [
+            ("Message", _member_name(guild, top_msg[0][0]) if top_msg else "—"),
+            ("Vocale", _member_name(guild, top_voc[0][0]) if top_voc and top_voc[0][1] > 0 else "—"),
+        ]
 
-        members_msg_ranking = [(_member_label(guild, uid), f"{n} messages") for uid, n in buckets["by_user"].most_common(10)]
-        voice_by_user = Counter()
-        for row in voice_focus:
-            voice_by_user[row["user_id"]] += row["seconds"]
-        members_voice_ranking = [(_member_label(guild, uid), _format_duration(s)) for uid, s in voice_by_user.most_common(10)]
-        members_row = hrow([
-            render_ranking_card(split_width(CONTENT_WIDTH, 2), "Top membres (messages)", members_msg_ranking),
-            render_ranking_card(split_width(CONTENT_WIDTH, 2), "Top membres (vocal)", members_voice_ranking),
-        ])
+        top_rows = [
+            _top_row("text", buckets["by_channel"].most_common(1),
+                     lambda cid: f"#{_channel_name(guild, cid)}", str, "messages"),
+            _top_row("voice", _sum_by(voice_focus, "channel_id").most_common(1),
+                     lambda cid: _channel_name(guild, cid), _format_hours, "heures"),
+            ("game", "", "", ""),
+        ]
 
-        reactions = await get_emoji_events(guild_id=guild.id, window_start=focus_start, window_end=focus_end, source="reaction")
-        reactive_users = Counter(r["user_id"] for r in reactions)
-        reactive_ranking = [(_member_label(guild, uid), f"{n} réactions") for uid, n in reactive_users.most_common(10)]
-        reactive_card = render_ranking_card(CONTENT_WIDTH, "Membres les plus réactifs", reactive_ranking)
+        voice_sessions = await get_voice_sessions_overlapping(guild_id=guild.id, window_start=focus_start, window_end=now)
+        voice_daily = _bucket_voice_daily(voice_sessions, focus_start, now)
+        graph_messages, graph_voice = _daily_series(buckets["by_day"], voice_daily, period, now)
 
-        hour_chart = _render_hour_panel(CONTENT_WIDTH, 340, buckets["by_hour"], "Activité par heure (messages)")
-
-        if buckets["by_day"]:
-            date_range = _date_range(buckets["by_day"].keys())
-            voice_rows = await get_voice_sessions_overlapping(guild_id=guild.id, window_start=focus_start, window_end=focus_end)
-            voice_daily = _bucket_voice_daily(voice_rows, focus_start, focus_end)
-            trend_chart = _render_dual_trend_panel(
-                CONTENT_WIDTH, 480, date_range,
-                [buckets["by_day"].get(d, 0) for d in date_range],
-                [voice_daily.get(d, 0.0) / 3600 for d in date_range],
-                "Activité dans le temps",
-            )
-        else:
-            trend_chart = render_empty_panel(CONTENT_WIDTH, 480)
-
-        card = compose_card(
-            header,
-            [stat_row, channel_row, members_row, reactive_card, hour_chart, trend_chart],
-            f"Généré le {_format_date_fr(now)} · Période : {period_label} · ScoobyBot",
+        joined = guild.me.joined_at
+        data = CardData(
+            avatar=await _read_asset(guild.icon),
+            placeholder_glyph=(guild.name[:1] or "?").upper(),
+            title=guild.name,
+            title_suffix="",
+            subtitle=f"{guild.member_count} membres",
+            badges=[
+                ("Créé le", _format_date_fr(guild.created_at)),
+                ("Rejoint le", _format_date_fr(joined) if joined else "—"),
+            ],
+            rank_title="Top membres",
+            rank_rows=rank_rows,
+            messages_rows=messages_rows,
+            voice_rows=voice_rows,
+            top_title="Top des salons et applications",
+            top_rows=top_rows,
+            graph_messages=graph_messages,
+            graph_voice=graph_voice,
+            period_label=FOOTER_LABELS[period],
+            brand_icon=await self._brand_icon(interaction),
         )
-        await interaction.followup.send(
-            content=f"📊 **Statistiques de {guild.name}**",
-            file=to_discord_file(card, "serverstat.png"),
-        )
+        emoji_map = await fetch_emoji_images(collect_emojis(
+            data.title, data.subtitle, rank_rows[0][1], rank_rows[1][1], top_rows[0][1], top_rows[1][1],
+        ))
+        card = render_card(data, emoji_map)
+        await interaction.followup.send(file=to_discord_file(card, "serverstat.png"))
 
     # -- /userstat --------------------------------------------------------------
 
-    @app_commands.command(name="userstat", description="Statistiques d'un membre : messages, vocal, classement, streak")
-    @app_commands.describe(membre="Le membre à consulter (toi par défaut)", periode="Fenêtre pour les classements/salons/graphique")
+    @app_commands.command(name="userstat", description="Statistiques d'un membre : messages, vocal, classement, activité")
+    @app_commands.describe(membre="Le membre à consulter (toi par défaut)", periode="Période d'analyse (14 jours par défaut)")
     @app_commands.choices(periode=PERIOD_CHOICES)
     @app_commands.guild_only()
     async def userstat(self, interaction: discord.Interaction, membre: discord.Member = None, periode: app_commands.Choice[str] = None):
         member = membre or interaction.user
-        period = periode.value if periode else "30d"
-        period_label = PERIOD_LABELS[period]
+        period = periode.value if periode else DEFAULT_PERIOD
         await interaction.response.defer()
 
         guild = interaction.guild
         now = discord.utils.utcnow()
-        focus_start, focus_end = _window(period)
+        focus_start, _ = _window(period, now)
 
         all_messages = await get_messages(guild_id=guild.id, window_start=EPOCH, window_end=now)
-        buckets_all = _bucket_messages(all_messages)
-        user_messages_7d = sum(1 for m in all_messages if m["user_id"] == member.id and _parse_ts(m["created_at"]) >= now - timedelta(days=7))
-        user_messages_30d = sum(1 for m in all_messages if m["user_id"] == member.id and _parse_ts(m["created_at"]) >= now - timedelta(days=30))
-        user_messages_all = buckets_all["by_user"].get(member.id, 0)
-        focus_messages = [m for m in all_messages if focus_start <= _parse_ts(m["created_at"]) < focus_end and m["user_id"] == member.id]
-        user_buckets = _bucket_messages(focus_messages)
-        messages_period_value = {"7d": user_messages_7d, "30d": user_messages_30d, "all": user_messages_all}[period]
+        guild_focus_messages = [m for m in all_messages if _parse_ts(m["created_at"]) >= focus_start]
+        user_messages = [m for m in all_messages if m["user_id"] == member.id]
+        user_focus_messages = [m for m in guild_focus_messages if m["user_id"] == member.id]
+        buckets = _bucket_messages(user_focus_messages)
 
-        voice_7d = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=now - timedelta(days=7), window_end=now, user_id=member.id)
-        voice_30d = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=now - timedelta(days=30), window_end=now, user_id=member.id)
-        voice_all = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=EPOCH, window_end=now, user_id=member.id)
-        voice_focus = {"7d": voice_7d, "30d": voice_30d, "all": voice_all}[period]
-        voice_period_seconds = sum(r["seconds"] for r in voice_focus)
-
-        ranking = buckets_all["by_user"].most_common()
-        messages_rank = next((i for i, (uid, _n) in enumerate(ranking, start=1) if uid == member.id), None)
-
-        voice_all_guild = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=EPOCH, window_end=now)
-        voice_totals_by_user = Counter()
-        for row in voice_all_guild:
-            voice_totals_by_user[row["user_id"]] += row["seconds"]
-        voice_rank = next((i for i, (uid, _s) in enumerate(voice_totals_by_user.most_common(), start=1) if uid == member.id), None)
-
-        icon_image = await _read_asset(member.display_avatar)
-        subtitle = []
-        if member.joined_at:
-            subtitle.append(f"Arrivé le {_format_date_fr(member.joined_at)}")
-        subtitle.append(f"Compte créé le {_format_date_fr(member.created_at)}")
-        header = render_header(CONTENT_WIDTH, icon_image, member.display_name, subtitle)
-
-        member_days = await get_distinct_message_days(guild_id=guild.id, user_id=member.id)
-        streak = _compute_streak(member_days)
-
-        tiles = [
-            StatTile(
-                "Messages", str(messages_period_value), f"({period_label})",
-                f"7j {user_messages_7d} · 30j {user_messages_30d} · Tout {user_messages_all}",
-            ),
-            StatTile(
-                "Heures vocales", _format_duration(voice_period_seconds), f"({period_label})",
-                f"7j {_format_duration(sum(r['seconds'] for r in voice_7d))} · "
-                f"30j {_format_duration(sum(r['seconds'] for r in voice_30d))} · "
-                f"Tout {_format_duration(sum(r['seconds'] for r in voice_all))}",
-            ),
-            StatTile("Classement", f"#{messages_rank or '—'}", "messages", f"Vocal : #{voice_rank or '—'}"),
-            StatTile("Streak", str(streak), "jour(s) consécutif(s)"),
+        messages_rows = [
+            (label, str(_count_since(user_messages, now, days)), "messages")
+            for label, days in SUB_WINDOWS[period]
         ]
-        stat_row = render_stat_row(CONTENT_WIDTH, tiles)
+        voice_sub = await self._voice_subtotals(guild.id, now, period, user_id=member.id)
+        voice_rows = [
+            (label, _format_hours(sum(r["seconds"] for r in rows)), "heures")
+            for label, rows in voice_sub
+        ]
+        voice_focus = voice_sub[-1][1]
 
-        top_text_channels = [(_text_channel_label(guild, cid), f"{n} messages") for cid, n in user_buckets["by_channel"].most_common(5)]
-        user_voice_channels = Counter()
-        for row in voice_focus:
-            user_voice_channels[row["channel_id"]] += row["seconds"]
-        top_voice_channels = [(_voice_channel_label(guild, cid), _format_duration(s)) for cid, s in user_voice_channels.most_common(5)]
-        channel_row = hrow([
-            render_ranking_card(split_width(CONTENT_WIDTH, 2), "Top salons texte", top_text_channels, max_rows=5),
-            render_ranking_card(split_width(CONTENT_WIDTH, 2), "Top salons vocaux", top_voice_channels, max_rows=5),
-        ])
+        # Classement sur la période, parmi tout le serveur
+        guild_voice_focus = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=focus_start, window_end=now)
+        rank_rows = [
+            ("Message", _rank_label(Counter(m["user_id"] for m in guild_focus_messages), member.id)),
+            ("Vocale", _rank_label(_sum_by(guild_voice_focus, "user_id"), member.id)),
+        ]
 
-        user_emojis = await get_emoji_events(guild_id=guild.id, window_start=focus_start, window_end=focus_end, user_id=member.id)
-        emoji_counts = Counter(_emoji_chip_key(row) for row in user_emojis)
-        chips = [f"{name} ×{n}" for name, n in emoji_counts.most_common(15)]
-        chip_row = render_chip_row(CONTENT_WIDTH, "Emojis les plus utilisés (messages + réactions)", chips)
+        top_rows = [
+            _top_row("text", buckets["by_channel"].most_common(1),
+                     lambda cid: f"#{_channel_name(guild, cid)}", str, "messages"),
+            _top_row("voice", _sum_by(voice_focus, "channel_id").most_common(1),
+                     lambda cid: _channel_name(guild, cid), _format_hours, "heures"),
+            ("game", "", "", ""),
+        ]
 
-        hour_chart = _render_hour_panel(CONTENT_WIDTH, 340, user_buckets["by_hour"], f"Activité par heure — {member.display_name}")
-        if user_buckets["by_day"]:
-            date_range = _date_range(user_buckets["by_day"].keys())
-            trend_chart = _render_trend_panel(
-                CONTENT_WIDTH, 340, date_range,
-                [user_buckets["by_day"].get(d, 0) for d in date_range],
-                f"Messages dans le temps — {member.display_name}",
-            )
-        else:
-            trend_chart = render_empty_panel(CONTENT_WIDTH, 340)
-
-        card = compose_card(
-            header,
-            [stat_row, channel_row, chip_row, hour_chart, trend_chart],
-            f"Généré le {_format_date_fr(now)} · Période : {period_label} · ScoobyBot",
+        voice_sessions = await get_voice_sessions_overlapping(
+            guild_id=guild.id, window_start=focus_start, window_end=now, user_id=member.id,
         )
-        await interaction.followup.send(
-            content=f"📊 **Statistiques de {member.display_name}**",
-            file=to_discord_file(card, "userstat.png"),
+        voice_daily = _bucket_voice_daily(voice_sessions, focus_start, now)
+        graph_messages, graph_voice = _daily_series(buckets["by_day"], voice_daily, period, now)
+
+        data = CardData(
+            avatar=await _read_asset(member.display_avatar),
+            placeholder_glyph=(member.display_name[:1] or "?").upper(),
+            title=member.display_name,
+            title_suffix=member.name,
+            subtitle=guild.name,
+            badges=[
+                ("Créé le", _format_date_fr(member.created_at)),
+                ("Rejoint le", _format_date_fr(member.joined_at) if member.joined_at else "—"),
+            ],
+            rank_title="Classement serveur",
+            rank_rows=rank_rows,
+            messages_rows=messages_rows,
+            voice_rows=voice_rows,
+            top_title="Top des salons et applications",
+            top_rows=top_rows,
+            graph_messages=graph_messages,
+            graph_voice=graph_voice,
+            period_label=FOOTER_LABELS[period],
+            brand_icon=await self._brand_icon(interaction),
         )
+        emoji_map = await fetch_emoji_images(collect_emojis(
+            data.title, data.title_suffix, data.subtitle, top_rows[0][1], top_rows[1][1],
+        ))
+        card = render_card(data, emoji_map)
+        await interaction.followup.send(file=to_discord_file(card, "userstat.png"))
 
     # -- /channelstat -----------------------------------------------------------
 
-    @app_commands.command(name="channelstat", description="Statistiques d'un salon : messages ou vocal, top membres, activité")
-    @app_commands.describe(salon="Le salon à consulter (salon courant par défaut)", periode="Fenêtre pour les classements et le graphique")
+    @app_commands.command(name="channelstat", description="Statistiques d'un salon : messages, vocal, top membres, activité")
+    @app_commands.describe(salon="Le salon à consulter (salon courant par défaut)", periode="Période d'analyse (14 jours par défaut)")
     @app_commands.choices(periode=PERIOD_CHOICES)
     @app_commands.guild_only()
     async def channelstat(
@@ -457,87 +357,79 @@ class StatCommands(commands.Cog):
         periode: app_commands.Choice[str] = None,
     ):
         channel = salon or interaction.channel
-        period = periode.value if periode else "30d"
-        period_label = PERIOD_LABELS[period]
+        period = periode.value if periode else DEFAULT_PERIOD
         await interaction.response.defer()
 
         guild = interaction.guild
         now = discord.utils.utcnow()
-        focus_start, focus_end = _window(period)
+        focus_start, _ = _window(period, now)
         is_voice = isinstance(channel, discord.VoiceChannel)
 
-        title = channel.name if is_voice else f"#{channel.name}"
-        header = render_header(CONTENT_WIDTH, None, title, ["Salon vocal" if is_voice else "Salon texte"])
+        all_messages = await get_messages(guild_id=guild.id, window_start=EPOCH, window_end=now)
+        guild_focus_messages = [m for m in all_messages if _parse_ts(m["created_at"]) >= focus_start]
+        channel_messages = [m for m in all_messages if m["channel_id"] == channel.id]
+        channel_focus_messages = [m for m in guild_focus_messages if m["channel_id"] == channel.id]
+        buckets = _bucket_messages(channel_focus_messages)
 
-        if is_voice:
-            voice_7d = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=now - timedelta(days=7), window_end=now, channel_id=channel.id)
-            voice_30d = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=now - timedelta(days=30), window_end=now, channel_id=channel.id)
-            voice_all = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=EPOCH, window_end=now, channel_id=channel.id)
-            voice_focus = {"7d": voice_7d, "30d": voice_30d, "all": voice_all}[period]
+        messages_rows = [
+            (label, str(_count_since(channel_messages, now, days)), "messages")
+            for label, days in SUB_WINDOWS[period]
+        ]
+        voice_sub = await self._voice_subtotals(guild.id, now, period, channel_id=channel.id)
+        voice_rows = [
+            (label, _format_hours(sum(r["seconds"] for r in rows)), "heures")
+            for label, rows in voice_sub
+        ]
+        voice_focus = voice_sub[-1][1]
 
-            tiles = [StatTile(
-                "Heures vocales", _format_duration(sum(r["seconds"] for r in voice_focus)), f"({period_label})",
-                f"7j {_format_duration(sum(r['seconds'] for r in voice_7d))} · "
-                f"30j {_format_duration(sum(r['seconds'] for r in voice_30d))} · "
-                f"Tout {_format_duration(sum(r['seconds'] for r in voice_all))}",
-            )]
-            stat_row = render_stat_row(CONTENT_WIDTH, tiles)
+        # Classement du salon parmi les salons du serveur, sur la période
+        guild_voice_focus = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=focus_start, window_end=now)
+        rank_rows = [
+            ("Message", _rank_label(Counter(m["channel_id"] for m in guild_focus_messages), channel.id)),
+            ("Vocale", _rank_label(_sum_by(guild_voice_focus, "channel_id"), channel.id)),
+        ]
 
-            by_user = Counter()
-            for row in voice_focus:
-                by_user[row["user_id"]] += row["seconds"]
-            ranking = [(_member_label(guild, uid), _format_duration(s)) for uid, s in by_user.most_common(10)]
-            ranking_card = render_ranking_card(CONTENT_WIDTH, "Top membres", ranking)
+        top_rows = [
+            _top_row("text", buckets["by_user"].most_common(1),
+                     lambda uid: _member_name(guild, uid), str, "messages"),
+            _top_row("voice", _sum_by(voice_focus, "user_id").most_common(1),
+                     lambda uid: _member_name(guild, uid), _format_hours, "heures"),
+            ("game", "", "", ""),
+        ]
 
-            voice_rows = await get_voice_sessions_overlapping(guild_id=guild.id, window_start=focus_start, window_end=focus_end, channel_id=channel.id)
-            voice_daily = _bucket_voice_daily(voice_rows, focus_start, focus_end)
-            if voice_daily:
-                date_range = _date_range(voice_daily.keys())
-                chart = _render_trend_panel(
-                    CONTENT_WIDTH, 340, date_range, [voice_daily.get(d, 0.0) / 3600 for d in date_range],
-                    f"Heures vocales dans le temps — {channel.name}", color=SERIES_VOICE_HEX,
-                )
-            else:
-                chart = render_empty_panel(CONTENT_WIDTH, 340)
-
-            body_blocks = [stat_row, ranking_card, chart]
-        else:
-            all_messages = await get_messages(guild_id=guild.id, window_start=EPOCH, window_end=now, channel_id=channel.id)
-            counts_7d = sum(1 for m in all_messages if _parse_ts(m["created_at"]) >= now - timedelta(days=7))
-            counts_30d = sum(1 for m in all_messages if _parse_ts(m["created_at"]) >= now - timedelta(days=30))
-            focus_messages = [m for m in all_messages if focus_start <= _parse_ts(m["created_at"]) < focus_end]
-            buckets = _bucket_messages(focus_messages)
-            period_value = {"7d": counts_7d, "30d": counts_30d, "all": len(all_messages)}[period]
-
-            tiles = [StatTile(
-                "Messages", str(period_value), f"({period_label})",
-                f"7j {counts_7d} · 30j {counts_30d} · Tout {len(all_messages)}",
-            )]
-            stat_row = render_stat_row(CONTENT_WIDTH, tiles)
-
-            ranking = [(_member_label(guild, uid), f"{n} messages") for uid, n in buckets["by_user"].most_common(10)]
-            ranking_card = render_ranking_card(CONTENT_WIDTH, "Top membres", ranking)
-
-            hour_chart = _render_hour_panel(CONTENT_WIDTH, 340, buckets["by_hour"], f"Activité par heure — {channel.name}")
-            if buckets["by_day"]:
-                date_range = _date_range(buckets["by_day"].keys())
-                trend_chart = _render_trend_panel(
-                    CONTENT_WIDTH, 340, date_range, [buckets["by_day"].get(d, 0) for d in date_range],
-                    f"Messages dans le temps — {channel.name}",
-                )
-            else:
-                trend_chart = render_empty_panel(CONTENT_WIDTH, 340)
-
-            body_blocks = [stat_row, ranking_card, hour_chart, trend_chart]
-
-        card = compose_card(
-            header, body_blocks,
-            f"Généré le {_format_date_fr(now)} · Période : {period_label} · ScoobyBot",
+        voice_sessions = await get_voice_sessions_overlapping(
+            guild_id=guild.id, window_start=focus_start, window_end=now, channel_id=channel.id,
         )
-        await interaction.followup.send(
-            content=f"📊 **Statistiques de {channel.name}**",
-            file=to_discord_file(card, "channelstat.png"),
+        voice_daily = _bucket_voice_daily(voice_sessions, focus_start, now)
+        graph_messages, graph_voice = _daily_series(buckets["by_day"], voice_daily, period, now)
+
+        created = getattr(channel, "created_at", None)
+        data = CardData(
+            avatar=None,
+            placeholder_glyph="♪" if is_voice else "#",
+            title=channel.name if is_voice else f"#{channel.name}",
+            title_suffix="",
+            subtitle=guild.name,
+            badges=[
+                ("Créé le", _format_date_fr(created) if created else "—"),
+                ("Type", "Vocal" if is_voice else "Texte"),
+            ],
+            rank_title="Classement serveur",
+            rank_rows=rank_rows,
+            messages_rows=messages_rows,
+            voice_rows=voice_rows,
+            top_title="Top des membres",
+            top_rows=top_rows,
+            graph_messages=graph_messages,
+            graph_voice=graph_voice,
+            period_label=FOOTER_LABELS[period],
+            brand_icon=await self._brand_icon(interaction),
         )
+        emoji_map = await fetch_emoji_images(collect_emojis(
+            data.title, data.subtitle, top_rows[0][1], top_rows[1][1],
+        ))
+        card = render_card(data, emoji_map)
+        await interaction.followup.send(file=to_discord_file(card, "channelstat.png"))
 
 
 async def setup(bot):

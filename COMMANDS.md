@@ -51,15 +51,15 @@ Le bot quitte automatiquement le salon vocal après **10 minutes d'inactivité**
 
 Le suivi (messages, sessions vocales, réactions, invitations, boosts, commandes utilisées) se fait automatiquement en arrière-plan et s'écrit événement par événement dans Supabase — aucune commande à lancer pour ça, et aucun recalcul depuis l'historique Discord au moment de consulter les stats (`cogs/stats.py` capture les événements, `cogs/statcommands.py` ne fait que lire et compose une image via `cardkit.py`).
 
-Chaque commande répond avec **une seule image** (une "card" générée avec Pillow/matplotlib, style dashboard sombre) regroupant chiffres, classements et graphiques — pas d'embed Discord séparé, juste un titre minimal dans le message.
+Chaque commande répond avec **une seule image 1280×708** (card générée avec Pillow, layout inspiré de Statbot) : header avatar + badges de dates, bloc classement, blocs Messages / Activité vocale sur trois sous-fenêtres, top salons/membres, et graphique superposé messages (vert) vs vocal (rose) sans axes. Les emojis dans les noms sont rendus via des images Twemoji (téléchargées au premier usage puis cachées) — le premier rendu après un démarrage nécessite donc un accès réseau.
 
-Les trois commandes de lecture prennent un paramètre optionnel **`periode`** (`7 jours` / `30 jours` / `Tout`, défaut `30 jours`) qui filtre les classements, salons et graphiques affichés dans la card — les totaux 7j/30j/Tout en tête de card, eux, sont toujours affichés ensemble.
+Les trois commandes de lecture prennent un paramètre optionnel **`periode`** (`7 jours` / `14 jours` / `30 jours` / `Tout`, défaut **`14 jours`**) qui pilote toute la card ; les trois sous-fenêtres des blocs chiffres suivent la période : 7j → 1j/3j/7j · 14j → 1j/7j/14j · 30j → 1j/7j/30j · Tout → 1j/7j/Tout.
 
 | Commande | Description |
 |---|---|
-| `/serverstat [periode]` | Messages et heures vocales (7j/30j/Tout) ; top 10 salons texte et vocaux ; top membres messages et vocal (classements séparés) ; contributeurs actifs ; membres les plus réactifs ; jour le plus actif ; dates de création du serveur et d'ajout du bot ; graphiques : activité par heure, et messages vs heures vocales dans le temps. |
-| `/userstat [membre] [periode]` | Messages et heures vocales (7j/30j/Tout) ; classement serveur (messages et vocal séparés) ; top salons texte/vocaux du membre ; streak de jours consécutifs actifs ; emojis les plus utilisés (messages + réactions) ; dates d'arrivée et de création du compte ; graphiques : activité par heure et dans le temps. |
-| `/channelstat [salon] [periode]` | Pour un salon texte : messages (7j/30j/Tout), top membres, activité par heure et dans le temps. Pour un salon vocal : heures vocales (7j/30j/Tout), top membres, activité dans le temps. Salon courant par défaut. |
+| `/serverstat [periode]` | Card du serveur : badges création serveur / ajout du bot ; bloc « Top membres » (meilleur membre messages et vocal) ; messages et heures vocales par sous-fenêtres ; top salon texte + top salon vocal ; graphique d'activité. |
+| `/userstat [membre] [periode]` | Card d'un membre (réplique de la référence) : badges création du compte / arrivée sur le serveur ; bloc « Classement serveur » (Message #X / Vocale #X sur la période) ; messages et heures vocales ; top salons du membre ; graphique d'activité. |
+| `/channelstat [salon] [periode]` | Card d'un salon (texte ou vocal, salon courant par défaut) : badges création / type ; bloc « Classement serveur » (rang du salon en messages et en vocal) ; messages et heures vocales du salon ; top membres du salon ; graphique d'activité. |
 
 Le suivi démarre à partir du moment où ce système est déployé — pas de recalcul automatique de l'historique antérieur, sauf lancement manuel de `/initialize` (voir ci-dessous).
 

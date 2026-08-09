@@ -104,13 +104,13 @@ Le bot quitte automatiquement le vocal après 10 minutes sans rien en lecture (p
 
 ### Statistiques
 
-Le suivi (messages, vocal, réactions, invitations, boosts, commandes) se fait automatiquement en arrière-plan et s'écrit dans Supabase événement par événement — aucune commande à lancer pour l'alimenter, et les commandes ci-dessous lisent directement Supabase sans jamais rescanner l'historique Discord. Chaque commande répond avec une seule image (card générée avec Pillow/matplotlib, style dashboard sombre) plutôt qu'un embed et des graphiques séparés.
+Le suivi (messages, vocal, réactions, invitations, boosts, commandes) se fait automatiquement en arrière-plan et s'écrit dans Supabase événement par événement — aucune commande à lancer pour l'alimenter, et les commandes ci-dessous lisent directement Supabase sans jamais rescanner l'historique Discord. Chaque commande répond avec une seule image 1280×708 (card Pillow au layout inspiré de Statbot : badges de dates, classement, chiffres par sous-fenêtres, tops, graphique superposé messages/vocal). Les emojis des noms sont rendus via Twemoji (téléchargés au premier usage puis cachés en mémoire).
 
-- `/serverstat [periode]` — vue d'ensemble du serveur : messages/vocal 7j-30j-Tout, classements salons et membres, contributeurs actifs, membres les plus réactifs, jour le plus actif, dates clés, graphiques d'activité
-- `/userstat [membre] [periode]` — vue d'ensemble d'un membre : messages/vocal, classement serveur, salons préférés, streak, emojis favoris, dates, graphiques
-- `/channelstat [salon] [periode]` — vue d'ensemble d'un salon (texte ou vocal) : activité, top membres, graphique dans le temps
+- `/serverstat [periode]` — card du serveur : top membres (messages/vocal), messages et heures vocales, top salons, graphique d'activité
+- `/userstat [membre] [periode]` — card d'un membre : classement serveur (Message #X / Vocale #X), messages, heures vocales, top salons, graphique
+- `/channelstat [salon] [periode]` — card d'un salon (texte ou vocal) : rang du salon, messages, heures vocales, top membres, graphique
 
-`periode` (`7 jours` / `30 jours` / `Tout`, défaut 30 jours) filtre les classements et graphiques affichés dans la card ; les totaux 7j/30j/Tout en tête de card restent toujours affichés ensemble.
+`periode` (`7 jours` / `14 jours` / `30 jours` / `Tout`, défaut **14 jours**) pilote toute la card ; les trois sous-fenêtres des blocs chiffres s'y adaptent (ex. 14j → 1j/7j/14j).
 
 Deux commandes admin complètent les données au lieu de simplement les lire :
 - `/initialize [channel]` — importe l'historique des messages d'un salon (ou de tous) dans Supabase ; sans risque de doublon même en relançant la commande plus tard
@@ -126,7 +126,7 @@ Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COM
 ScoobyBot/
 ├── bot.py                     point d'entrée, charge les cogs, sync des slash commands
 ├── supabase_client.py         client Supabase (lecture/écriture) partagé par les cogs
-├── cardkit.py                  moteur de layout (Pillow + matplotlib) pour les cards stats — un PNG par commande
+├── cardkit.py                  rendu des cards stats (Pillow, 1280×708, layout Statbot) + emojis Twemoji
 ├── supabase/
 │   └── schema.sql              schéma complet (tables + fonctions) à exécuter une fois sur le projet Supabase
 ├── cogs/

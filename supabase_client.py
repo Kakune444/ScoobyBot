@@ -237,40 +237,59 @@ async def get_open_boost_user_ids(*, guild_id):
 # Lecture — utilisé par cogs/statcommands.py (/serverstat /userstat /channelstat)
 # ---------------------------------------------------------------------------
 
+# PostgREST (Supabase) tronque silencieusement toute réponse à 1000 lignes par
+# défaut : les lectures de lignes brutes doivent donc paginer, sinon tout ce qui
+# dépasse (ex. un salon avec 2000+ messages importés par /initialize) est perdu
+# à la lecture. Le tri sur la clé primaire rend la pagination stable.
+_PAGE_SIZE = 1000
+
+
 async def get_messages(*, guild_id, window_start, window_end, channel_id=None, user_id=None):
     """Messages bruts (channel_id, user_id, created_at) sur la fenêtre — agrégés côté Python."""
     client = await get_client()
-    query = (
-        client.table("messages")
-        .select("channel_id, user_id, created_at")
-        .eq("guild_id", guild_id)
-        .gte("created_at", window_start.isoformat())
-        .lt("created_at", window_end.isoformat())
-    )
-    if channel_id is not None:
-        query = query.eq("channel_id", channel_id)
-    if user_id is not None:
-        query = query.eq("user_id", user_id)
-    res = await query.execute()
-    return res.data
+    rows = []
+    offset = 0
+    while True:
+        query = (
+            client.table("messages")
+            .select("channel_id, user_id, created_at")
+            .eq("guild_id", guild_id)
+            .gte("created_at", window_start.isoformat())
+            .lt("created_at", window_end.isoformat())
+        )
+        if channel_id is not None:
+            query = query.eq("channel_id", channel_id)
+        if user_id is not None:
+            query = query.eq("user_id", user_id)
+        res = await query.order("message_id").range(offset, offset + _PAGE_SIZE - 1).execute()
+        rows.extend(res.data)
+        if len(res.data) < _PAGE_SIZE:
+            return rows
+        offset += _PAGE_SIZE
 
 
 async def get_voice_sessions_overlapping(*, guild_id, window_start, window_end, channel_id=None, user_id=None):
     """Sessions vocales brutes qui chevauchent la fenêtre (pour un bucketing par jour côté Python)."""
     client = await get_client()
-    query = (
-        client.table("voice_sessions")
-        .select("channel_id, user_id, joined_at, left_at")
-        .eq("guild_id", guild_id)
-        .lt("joined_at", window_end.isoformat())
-        .or_(f"left_at.is.null,left_at.gte.{window_start.isoformat()}")
-    )
-    if channel_id is not None:
-        query = query.eq("channel_id", channel_id)
-    if user_id is not None:
-        query = query.eq("user_id", user_id)
-    res = await query.execute()
-    return res.data
+    rows = []
+    offset = 0
+    while True:
+        query = (
+            client.table("voice_sessions")
+            .select("channel_id, user_id, joined_at, left_at")
+            .eq("guild_id", guild_id)
+            .lt("joined_at", window_end.isoformat())
+            .or_(f"left_at.is.null,left_at.gte.{window_start.isoformat()}")
+        )
+        if channel_id is not None:
+            query = query.eq("channel_id", channel_id)
+        if user_id is not None:
+            query = query.eq("user_id", user_id)
+        res = await query.order("session_id").range(offset, offset + _PAGE_SIZE - 1).execute()
+        rows.extend(res.data)
+        if len(res.data) < _PAGE_SIZE:
+            return rows
+        offset += _PAGE_SIZE
 
 
 async def get_voice_seconds_breakdown(*, guild_id, window_start, window_end, user_id=None, channel_id=None):
@@ -288,19 +307,25 @@ async def get_voice_seconds_breakdown(*, guild_id, window_start, window_end, use
 
 async def get_emoji_events(*, guild_id, window_start, window_end, source=None, user_id=None):
     client = await get_client()
-    query = (
-        client.table("emoji_events")
-        .select("emoji_id, emoji_name, is_custom, is_animated, user_id, source")
-        .eq("guild_id", guild_id)
-        .gte("created_at", window_start.isoformat())
-        .lt("created_at", window_end.isoformat())
-    )
-    if source is not None:
-        query = query.eq("source", source)
-    if user_id is not None:
-        query = query.eq("user_id", user_id)
-    res = await query.execute()
-    return res.data
+    rows = []
+    offset = 0
+    while True:
+        query = (
+            client.table("emoji_events")
+            .select("emoji_id, emoji_name, is_custom, is_animated, user_id, source")
+            .eq("guild_id", guild_id)
+            .gte("created_at", window_start.isoformat())
+            .lt("created_at", window_end.isoformat())
+        )
+        if source is not None:
+            query = query.eq("source", source)
+        if user_id is not None:
+            query = query.eq("user_id", user_id)
+        res = await query.order("event_id").range(offset, offset + _PAGE_SIZE - 1).execute()
+        rows.extend(res.data)
+        if len(res.data) < _PAGE_SIZE:
+            return rows
+        offset += _PAGE_SIZE
 
 
 async def get_distinct_message_days(*, guild_id, user_id):

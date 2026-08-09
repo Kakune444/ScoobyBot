@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-PREFIX = os.getenv("BOT_PREFIX", "!")
+PREFIX = os.getenv("BOT_PREFIX", "/")
 
 intents = discord.Intents.default()
 intents.members = True

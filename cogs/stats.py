@@ -1,11 +1,15 @@
 import asyncio
 import re
+from datetime import datetime, timedelta, timezone
 
 import discord
 import emoji
+from discord import app_commands
 from discord.ext import commands
 
+from cogs.scooby_quotes import scooby_quote
 from supabase_client import (
+    bulk_insert_messages,
     close_voice_session,
     delete_invite,
     end_boost,
@@ -13,6 +17,8 @@ from supabase_client import (
     get_cached_invite_uses,
     get_open_boost_user_ids,
     get_open_voice_sessions,
+    get_voice_seconds_breakdown,
+    insert_completed_voice_session,
     insert_message,
     open_voice_session,
     record_command_usage,
@@ -24,6 +30,16 @@ from supabase_client import (
 )
 
 CUSTOM_EMOJI_RE = re.compile(r"<(a?):(\w+):(\d+)>")
+EPOCH = datetime(2015, 1, 1, tzinfo=timezone.utc)
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes = remainder // 60
+    if hours:
+        return f"{hours}h{minutes:02d}"
+    return f"{minutes}min"
 
 
 def _extract_emojis(content: str) -> list[dict]:
@@ -53,12 +69,14 @@ def _extract_emojis(content: str) -> list[dict]:
 
 class Stats(commands.Cog):
     """Capture les événements (messages, vocal, réactions, invitations, boosts,
-    commandes) et les écrit dans Supabase. Aucune commande ici — la lecture des
-    stats se fait dans cogs/statcommands.py."""
+    commandes) et les écrit dans Supabase. La lecture des stats se fait dans
+    cogs/statcommands.py ; les deux commandes ici (/initialize, /addtime) sont
+    des écritures manuelles (backfill / correction), pas de la lecture."""
 
     def __init__(self, bot):
         self.bot = bot
         self._invite_locks: dict[int, asyncio.Lock] = {}
+        self._initializing_guilds: set[int] = set()
 
     def _invite_lock(self, guild_id: int) -> asyncio.Lock:
         return self._invite_locks.setdefault(guild_id, asyncio.Lock())
@@ -231,6 +249,101 @@ class Stats(commands.Cog):
             command_name=command.qualified_name,
             used_at=discord.utils.utcnow(),
         ))
+
+    # -- commandes manuelles (admin) -----------------------------------------------
+
+    @app_commands.command(name="initialize", description="Importer l'historique des messages d'un salon (ou de tous) dans les statistiques")
+    @app_commands.describe(channel="Ne scanner qu'un salon précis (sinon tous les salons textuels)")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def initialize(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        guild = interaction.guild
+        if guild.id in self._initializing_guilds:
+            await interaction.response.send_message("⏳ Un import est déjà en cours sur ce serveur.", ephemeral=True)
+            return
+
+        self._initializing_guilds.add(guild.id)
+        try:
+            cutoff = discord.utils.utcnow()
+            channels = [channel] if channel is not None else guild.text_channels
+            scope_label = f"le salon {channel.mention}" if channel is not None else f"{len(channels)} salon(s)"
+
+            await interaction.response.defer()
+            status = await interaction.followup.send(
+                f"🔎 Import de l'historique des messages sur {scope_label}... "
+                "Ça peut prendre plusieurs minutes, merci de patienter.\n"
+                "-# Chaque message n'est compté qu'une fois, même en relançant la commande plus tard."
+            )
+
+            try:
+                total = 0
+                buffer = []
+                channels_done = 0
+
+                for ch in channels:
+                    perms = ch.permissions_for(guild.me)
+                    if perms.view_channel and perms.read_message_history:
+                        try:
+                            async for message in ch.history(limit=None, before=cutoff, oldest_first=True):
+                                if message.author.bot:
+                                    continue
+                                buffer.append({
+                                    "message_id": message.id,
+                                    "guild_id": guild.id,
+                                    "channel_id": ch.id,
+                                    "user_id": message.author.id,
+                                    "created_at": message.created_at,
+                                })
+                                if len(buffer) >= 500:
+                                    total += await bulk_insert_messages(buffer)
+                                    buffer = []
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
+
+                    channels_done += 1
+                    if channel is None and (channels_done % 3 == 0 or channels_done == len(channels)):
+                        await status.edit(content=f"🔎 Import en cours... {channels_done}/{len(channels)} salons traités, {total} messages traités jusqu'ici.")
+
+                if buffer:
+                    total += await bulk_insert_messages(buffer)
+
+                await status.edit(content=f"✅ Import terminé : {total} messages traités sur {scope_label}.\n💬 *{scooby_quote()}*")
+            except Exception as e:
+                await status.edit(content=f"❌ L'import a échoué en cours de route : {e}")
+        finally:
+            self._initializing_guilds.discard(guild.id)
+
+    @app_commands.command(name="addtime", description="Ajouter manuellement du temps vocal à un membre (rattrapage / correction)")
+    @app_commands.describe(salon="Le salon vocal concerné", membre="Le membre à créditer", minutes="Le nombre de minutes à ajouter")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def addtime(
+        self,
+        interaction: discord.Interaction,
+        salon: discord.VoiceChannel,
+        membre: discord.Member,
+        minutes: app_commands.Range[int, 1, 100000],
+    ):
+        guild = interaction.guild
+        now = discord.utils.utcnow()
+        joined_at = now - timedelta(minutes=minutes)
+        await interaction.response.defer()
+
+        await insert_completed_voice_session(
+            guild_id=guild.id, user_id=membre.id, channel_id=salon.id, joined_at=joined_at, left_at=now,
+        )
+        fire_and_forget(touch_member(guild_id=guild.id, user_id=membre.id, activity_at=now))
+
+        rows = await get_voice_seconds_breakdown(guild_id=guild.id, window_start=EPOCH, window_end=now, user_id=membre.id)
+        total_membre = sum(r["seconds"] for r in rows)
+        total_salon = sum(r["seconds"] for r in rows if r["channel_id"] == salon.id)
+
+        await interaction.followup.send(
+            f"✅ {minutes} min ajoutées à {membre.mention} dans {salon.mention}.\n"
+            f"Total de {membre.mention} dans ce salon (Tout) : **{_format_duration(total_salon)}**\n"
+            f"Total de {membre.mention} tous salons (Tout) : **{_format_duration(total_membre)}**\n"
+            f"💬 *{scooby_quote()}*"
+        )
 
     # -- réconciliation au démarrage ----------------------------------------------
 

@@ -61,7 +61,16 @@ Les trois commandes de lecture prennent un paramètre optionnel **`periode`** (`
 | `/userstat [membre] [periode]` | Messages et heures vocales (7j/30j/Tout) ; classement serveur (messages et vocal séparés) ; top salons texte/vocaux du membre ; streak de jours consécutifs actifs ; emojis les plus utilisés (messages + réactions) ; dates d'arrivée et de création du compte ; graphiques : activité par heure et dans le temps. |
 | `/channelstat [salon] [periode]` | Pour un salon texte : messages (7j/30j/Tout), top membres, activité par heure et dans le temps. Pour un salon vocal : heures vocales (7j/30j/Tout), top membres, activité dans le temps. Salon courant par défaut. |
 
-Le suivi démarre à partir du moment où ce système est déployé — pas de recalcul de l'historique antérieur (l'ancienne commande `!initialize` a été retirée avec le reste des anciennes commandes stats).
+Le suivi démarre à partir du moment où ce système est déployé — pas de recalcul automatique de l'historique antérieur, sauf lancement manuel de `/initialize` (voir ci-dessous).
+
+### Écritures manuelles (admin)
+
+Réservées aux administrateurs — corrigent ou complètent les données Supabase, contrairement aux trois commandes ci-dessus qui ne font que lire.
+
+| Commande | Description |
+|---|---|
+| `/initialize [channel]` | Scanne l'historique des messages d'un salon (ou de tous les salons textuels si omis) et les importe dans Supabase. Idempotent : chaque message n'est compté qu'une fois (`message_id` en clé primaire), donc relancer la commande — même sur un salon déjà importé — ne crée jamais de doublon. Peut prendre plusieurs minutes sur un gros historique. |
+| `/addtime <salon> <membre> <minutes>` | Crédite manuellement `minutes` de temps vocal à `membre` dans `salon` (rattrapage d'une session non trackée, correction). Insère une session vocale synthétique déjà close ; répond avec les nouveaux totaux du membre. |
 
 ## Blabla (`cogs/blabla.py`)
 

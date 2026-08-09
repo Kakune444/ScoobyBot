@@ -112,6 +112,10 @@ Le suivi (messages, vocal, réactions, invitations, boosts, commandes) se fait a
 
 `periode` (`7 jours` / `30 jours` / `Tout`, défaut 30 jours) filtre les classements et graphiques affichés dans la card ; les totaux 7j/30j/Tout en tête de card restent toujours affichés ensemble.
 
+Deux commandes admin complètent les données au lieu de simplement les lire :
+- `/initialize [channel]` — importe l'historique des messages d'un salon (ou de tous) dans Supabase ; sans risque de doublon même en relançant la commande plus tard
+- `/addtime <salon> <membre> <minutes>` — crédite manuellement du temps vocal à un membre (rattrapage, correction)
+
 Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COMMANDS.md).
 
 ---

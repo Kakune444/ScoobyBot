@@ -45,6 +45,20 @@ async def insert_message(*, message_id, guild_id, channel_id, user_id, created_a
     }).execute()
 
 
+async def bulk_insert_messages(rows: list[dict]) -> int:
+    """rows : [{"message_id", "guild_id", "channel_id", "user_id", "created_at": datetime}, ...]
+    Idempotent sur message_id (conflits ignorés) — utilisé par /initialize, relançable sans jamais dupliquer."""
+    if not rows:
+        return 0
+    client = await get_client()
+    chunk_size = 500
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i:i + chunk_size]
+        payload = [{**row, "created_at": row["created_at"].isoformat()} for row in chunk]
+        await client.table("messages").upsert(payload, on_conflict="message_id", ignore_duplicates=True).execute()
+    return len(rows)
+
+
 async def touch_member(*, guild_id, user_id, activity_at, guild_joined_at=None, is_message=False):
     client = await get_client()
     await client.rpc("touch_member", {
@@ -81,6 +95,18 @@ async def close_voice_session(*, guild_id, user_id, channel_id, left_at):
         .is_("left_at", "null")
         .execute()
     )
+
+
+async def insert_completed_voice_session(*, guild_id, user_id, channel_id, joined_at, left_at):
+    """Session déjà close, insérée directement — utilisé par /addtime pour créditer du temps manuellement."""
+    client = await get_client()
+    await client.table("voice_sessions").insert({
+        "guild_id": guild_id,
+        "user_id": user_id,
+        "channel_id": channel_id,
+        "joined_at": joined_at.isoformat(),
+        "left_at": left_at.isoformat(),
+    }).execute()
 
 
 async def get_open_voice_sessions(*, guild_id):

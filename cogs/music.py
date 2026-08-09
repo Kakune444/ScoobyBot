@@ -2,6 +2,7 @@ import asyncio
 
 import discord
 import yt_dlp
+from discord import app_commands
 from discord.ext import commands
 
 from cogs.scooby_quotes import scooby_quote
@@ -38,9 +39,10 @@ class Music(commands.Cog):
             data = data["entries"][0]
         return {"title": data.get("title", "Titre inconnu"), "url": data["url"]}
 
-    async def _play_next(self, ctx):
-        queue = self._queue(ctx.guild.id)
-        if not queue or ctx.voice_client is None:
+    async def _play_next(self, guild: discord.Guild, channel: discord.abc.Messageable):
+        queue = self._queue(guild.id)
+        voice_client = guild.voice_client
+        if not queue or voice_client is None:
             return
 
         track = queue.pop(0)
@@ -49,94 +51,113 @@ class Music(commands.Cog):
         def after(error):
             if error:
                 print(f"Erreur de lecture : {error}")
-            fut = asyncio.run_coroutine_threadsafe(self._play_next(ctx), self.bot.loop)
+            fut = asyncio.run_coroutine_threadsafe(self._play_next(guild, channel), self.bot.loop)
             try:
                 fut.result()
             except Exception as e:
                 print(f"Erreur après lecture : {e}")
 
-        ctx.voice_client.play(source, after=after)
-        await ctx.send(f"▶️ Lecture : **{track['title']}**\n💬 *{scooby_quote()}*")
+        voice_client.play(source, after=after)
+        await channel.send(f"▶️ Lecture : **{track['title']}**\n💬 *{scooby_quote()}*")
 
-    @commands.command(name="join")
-    async def join(self, ctx):
-        if ctx.author.voice is None:
-            await ctx.send("❌ Tu dois être dans un salon vocal.")
+    @app_commands.command(name="join", description="Faire rejoindre le bot dans ton salon vocal")
+    @app_commands.guild_only()
+    async def join(self, interaction: discord.Interaction):
+        if interaction.user.voice is None:
+            await interaction.response.send_message("❌ Tu dois être dans un salon vocal.", ephemeral=True)
             return
 
-        channel = ctx.author.voice.channel
-        if ctx.voice_client is not None:
-            await ctx.voice_client.move_to(channel)
+        channel = interaction.user.voice.channel
+        voice_client = interaction.guild.voice_client
+        if voice_client is not None:
+            await voice_client.move_to(channel)
         else:
             await channel.connect()
-        await ctx.send(f"✅ Rejoint **{channel.name}**.\n💬 *{scooby_quote()}*")
+        await interaction.response.send_message(f"✅ Rejoint **{channel.name}**.\n💬 *{scooby_quote()}*")
 
-    @commands.command(name="play")
-    async def play(self, ctx, *, recherche: str):
-        if ctx.voice_client is None:
-            if ctx.author.voice is None:
-                await ctx.send("❌ Tu dois être dans un salon vocal.")
+    @app_commands.command(name="play", description="Jouer ou ajouter un morceau à la file d'attente")
+    @app_commands.describe(recherche="Titre, artiste ou URL YouTube à jouer")
+    @app_commands.guild_only()
+    async def play(self, interaction: discord.Interaction, recherche: str):
+        if interaction.guild.voice_client is None:
+            if interaction.user.voice is None:
+                await interaction.response.send_message("❌ Tu dois être dans un salon vocal.", ephemeral=True)
                 return
-            await ctx.author.voice.channel.connect()
+            await interaction.user.voice.channel.connect()
 
-        async with ctx.typing():
-            try:
-                track = await self._extract(recherche)
-            except Exception as e:
-                await ctx.send(f"❌ Impossible de trouver ce morceau : {e}")
-                return
+        await interaction.response.defer()
 
-        queue = self._queue(ctx.guild.id)
+        try:
+            track = await self._extract(recherche)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Impossible de trouver ce morceau : {e}")
+            return
+
+        queue = self._queue(interaction.guild.id)
         queue.append(track)
 
-        if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
-            await ctx.send(f"➕ Ajouté à la file : **{track['title']}**\n💬 *{scooby_quote()}*")
+        voice_client = interaction.guild.voice_client
+        if voice_client.is_playing() or voice_client.is_paused():
+            await interaction.followup.send(f"➕ Ajouté à la file : **{track['title']}**\n💬 *{scooby_quote()}*")
         else:
-            await self._play_next(ctx)
+            await self._play_next(interaction.guild, interaction.channel)
+            try:
+                await interaction.delete_original_response()
+            except discord.HTTPException:
+                pass
 
-    @commands.command(name="queue")
-    async def queue_cmd(self, ctx):
-        queue = self._queue(ctx.guild.id)
+    @app_commands.command(name="queue", description="Afficher la file d'attente actuelle")
+    @app_commands.guild_only()
+    async def queue_cmd(self, interaction: discord.Interaction):
+        queue = self._queue(interaction.guild.id)
         if not queue:
-            await ctx.send("La file d'attente est vide.")
+            await interaction.response.send_message("La file d'attente est vide.", ephemeral=True)
             return
 
         lines = [f"{i + 1}. {t['title']}" for i, t in enumerate(queue)]
         embed = discord.Embed(title="File d'attente", description="\n".join(lines), color=discord.Color.green())
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.command(name="skip")
-    async def skip(self, ctx):
-        if ctx.voice_client is None or not ctx.voice_client.is_playing():
-            await ctx.send("❌ Rien n'est en cours de lecture.")
+    @app_commands.command(name="skip", description="Passer au morceau suivant")
+    @app_commands.guild_only()
+    async def skip(self, interaction: discord.Interaction):
+        voice_client = interaction.guild.voice_client
+        if voice_client is None or not voice_client.is_playing():
+            await interaction.response.send_message("❌ Rien n'est en cours de lecture.", ephemeral=True)
             return
-        ctx.voice_client.stop()
-        await ctx.send(f"⏭️ Morceau suivant.\n💬 *{scooby_quote()}*")
+        voice_client.stop()
+        await interaction.response.send_message(f"⏭️ Morceau suivant.\n💬 *{scooby_quote()}*")
 
-    @commands.command(name="pause")
-    async def pause(self, ctx):
-        if ctx.voice_client is None or not ctx.voice_client.is_playing():
-            await ctx.send("❌ Rien n'est en cours de lecture.")
+    @app_commands.command(name="pause", description="Mettre la lecture en pause")
+    @app_commands.guild_only()
+    async def pause(self, interaction: discord.Interaction):
+        voice_client = interaction.guild.voice_client
+        if voice_client is None or not voice_client.is_playing():
+            await interaction.response.send_message("❌ Rien n'est en cours de lecture.", ephemeral=True)
             return
-        ctx.voice_client.pause()
-        await ctx.send(f"⏸️ Lecture en pause.\n💬 *{scooby_quote()}*")
+        voice_client.pause()
+        await interaction.response.send_message(f"⏸️ Lecture en pause.\n💬 *{scooby_quote()}*")
 
-    @commands.command(name="resume")
-    async def resume(self, ctx):
-        if ctx.voice_client is None or not ctx.voice_client.is_paused():
-            await ctx.send("❌ Rien n'est en pause.")
+    @app_commands.command(name="resume", description="Reprendre la lecture en pause")
+    @app_commands.guild_only()
+    async def resume(self, interaction: discord.Interaction):
+        voice_client = interaction.guild.voice_client
+        if voice_client is None or not voice_client.is_paused():
+            await interaction.response.send_message("❌ Rien n'est en pause.", ephemeral=True)
             return
-        ctx.voice_client.resume()
-        await ctx.send(f"▶️ Reprise de la lecture.\n💬 *{scooby_quote()}*")
+        voice_client.resume()
+        await interaction.response.send_message(f"▶️ Reprise de la lecture.\n💬 *{scooby_quote()}*")
 
-    @commands.command(name="leave")
-    async def leave(self, ctx):
-        if ctx.voice_client is None:
-            await ctx.send("❌ Je ne suis pas connecté à un salon vocal.")
+    @app_commands.command(name="leave", description="Déconnecter le bot du salon vocal")
+    @app_commands.guild_only()
+    async def leave(self, interaction: discord.Interaction):
+        voice_client = interaction.guild.voice_client
+        if voice_client is None:
+            await interaction.response.send_message("❌ Je ne suis pas connecté à un salon vocal.", ephemeral=True)
             return
-        self._queue(ctx.guild.id).clear()
-        await ctx.voice_client.disconnect()
-        await ctx.send(f"👋 Déconnecté du vocal.\n💬 *{scooby_quote()}*")
+        self._queue(interaction.guild.id).clear()
+        await voice_client.disconnect()
+        await interaction.response.send_message(f"👋 Déconnecté du vocal.\n💬 *{scooby_quote()}*")
 
 
 async def setup(bot):

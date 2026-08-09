@@ -3,6 +3,7 @@ import os
 import re
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from cogs.scooby_quotes import scooby_quote
@@ -56,39 +57,42 @@ class Roles(commands.Cog):
         self.bot = bot
         self.autorole = _load_autorole()
 
-    @commands.command(name="rolemenu")
-    @commands.has_permissions(manage_roles=True)
-    async def rolemenu(self, ctx, *, contenu: str):
+    @app_commands.command(name="rolemenu", description="Créer un menu de rôles à sélection par boutons")
+    @app_commands.describe(contenu='Format : "Titre du menu" @Rôle1 | emoji | Label1 ; @Rôle2 | emoji | Label2')
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_roles=True)
+    async def rolemenu(self, interaction: discord.Interaction, contenu: str):
         match = re.match(r'^"(.+?)"\s*(.*)$', contenu, re.DOTALL)
         if not match:
-            await ctx.send(
+            await interaction.response.send_message(
                 '❌ Format invalide. Exemple :\n'
-                '`!rolemenu "Choisis ton rôle" @Gamer | 🎮 | Gamer ; @Artiste | 🎨 | Artiste`'
+                '`/rolemenu contenu:"Choisis ton rôle" @Gamer | 🎮 | Gamer ; @Artiste | 🎨 | Artiste`',
+                ephemeral=True,
             )
             return
 
         titre, roles_part = match.groups()
         segments = [s.strip() for s in roles_part.split(";") if s.strip()]
         if not segments:
-            await ctx.send("❌ Aucun rôle fourni.")
+            await interaction.response.send_message("❌ Aucun rôle fourni.", ephemeral=True)
             return
 
         roles_data = []
         for segment in segments:
             parts = [p.strip() for p in segment.split("|")]
             if len(parts) != 3:
-                await ctx.send(f"❌ Segment invalide (attendu `@rôle | emoji | label`) : `{segment}`")
+                await interaction.response.send_message(f"❌ Segment invalide (attendu `@rôle | emoji | label`) : `{segment}`", ephemeral=True)
                 return
 
             mention_str, emoji, label = parts
             role_match = ROLE_MENTION_RE.search(mention_str)
             if not role_match:
-                await ctx.send(f"❌ Rôle introuvable dans : `{mention_str}` (mentionne le rôle avec @)")
+                await interaction.response.send_message(f"❌ Rôle introuvable dans : `{mention_str}` (mentionne le rôle avec @)", ephemeral=True)
                 return
 
-            role = ctx.guild.get_role(int(role_match.group(1)))
+            role = interaction.guild.get_role(int(role_match.group(1)))
             if role is None:
-                await ctx.send(f"❌ Rôle introuvable sur ce serveur : `{mention_str}`")
+                await interaction.response.send_message(f"❌ Rôle introuvable sur ce serveur : `{mention_str}`", ephemeral=True)
                 return
 
             roles_data.append({"role_id": role.id, "emoji": emoji, "label": label})
@@ -97,52 +101,57 @@ class Roles(commands.Cog):
         embed = discord.Embed(title=titre, description=description, color=discord.Color.blurple())
 
         view = _build_view(roles_data)
-        message = await ctx.send(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view)
+        message = await interaction.original_response()
 
         menus = _load_menus()
         menus[str(message.id)] = {
-            "guild_id": ctx.guild.id,
-            "channel_id": ctx.channel.id,
+            "guild_id": interaction.guild.id,
+            "channel_id": interaction.channel.id,
             "title": titre,
             "roles": roles_data,
         }
         _save_menus(menus)
 
-    @commands.command(name="rolemenu_delete")
-    @commands.has_permissions(manage_roles=True)
-    async def rolemenu_delete(self, ctx, message_id: int):
+    @app_commands.command(name="rolemenu_delete", description="Supprimer un menu de rôles existant")
+    @app_commands.describe(message_id="L'ID du message contenant le menu de rôles")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_roles=True)
+    async def rolemenu_delete(self, interaction: discord.Interaction, message_id: str):
         menus = _load_menus()
-        entry = menus.get(str(message_id))
+        entry = menus.get(message_id)
         if entry is None:
-            await ctx.send("❌ Aucun menu de rôles trouvé avec cet ID.")
+            await interaction.response.send_message("❌ Aucun menu de rôles trouvé avec cet ID.", ephemeral=True)
             return
 
-        channel = ctx.guild.get_channel(entry["channel_id"])
+        channel = interaction.guild.get_channel(entry["channel_id"])
         if channel is not None:
             try:
-                message = await channel.fetch_message(message_id)
+                message = await channel.fetch_message(int(message_id))
                 await message.delete()
             except discord.NotFound:
                 pass
 
-        del menus[str(message_id)]
+        del menus[message_id]
         _save_menus(menus)
-        await ctx.send(f"✅ Menu de rôles supprimé.\n💬 *{scooby_quote()}*")
+        await interaction.response.send_message(f"✅ Menu de rôles supprimé.\n💬 *{scooby_quote()}*")
 
-    @commands.command(name="autorole")
-    @commands.has_permissions(manage_roles=True)
-    async def autorole_cmd(self, ctx, role: discord.Role = None):
-        guild_id = str(ctx.guild.id)
+    @app_commands.command(name="autorole", description="Définir (ou désactiver) le rôle donné automatiquement aux nouveaux membres")
+    @app_commands.describe(role="Le rôle à attribuer automatiquement (laisser vide pour désactiver)")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_roles=True)
+    async def autorole_cmd(self, interaction: discord.Interaction, role: discord.Role = None):
+        guild_id = str(interaction.guild.id)
 
         if role is None:
             self.autorole.pop(guild_id, None)
             _save_autorole(self.autorole)
-            await ctx.send("✅ Rôle automatique désactivé.")
+            await interaction.response.send_message("✅ Rôle automatique désactivé.")
             return
 
         self.autorole[guild_id] = role.id
         _save_autorole(self.autorole)
-        await ctx.send(f"✅ Les nouveaux membres recevront automatiquement le rôle {role.mention}.")
+        await interaction.response.send_message(f"✅ Les nouveaux membres recevront automatiquement le rôle {role.mention}.")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):

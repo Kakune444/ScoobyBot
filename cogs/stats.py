@@ -7,6 +7,7 @@ import time
 from zoneinfo import ZoneInfo
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 from PIL import Image, ImageDraw, ImageFont
 
@@ -246,10 +247,12 @@ class Stats(commands.Cog):
         if after.channel is not None:
             self.voice_sessions[key] = now
 
-    @commands.command(name="stats")
-    async def stats_cmd(self, ctx, member: discord.Member = None):
-        member = member or ctx.author
-        entry = self._entry(ctx.guild.id, member.id)
+    @app_commands.command(name="stats", description="Afficher les statistiques d'un membre (messages, temps vocal)")
+    @app_commands.describe(member="Le membre à consulter (toi par défaut)")
+    @app_commands.guild_only()
+    async def stats_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
+        member = member or interaction.user
+        entry = self._entry(interaction.guild.id, member.id)
 
         embed = discord.Embed(
             title=f"📊 Statistiques de {member.display_name}",
@@ -258,132 +261,146 @@ class Stats(commands.Cog):
         embed.add_field(name="💬 Messages", value=str(entry["messages"]), inline=True)
         embed.add_field(
             name="🎙️ Temps en vocal",
-            value=_format_duration(self._voice_seconds_live(ctx.guild.id, member.id, entry)),
+            value=_format_duration(self._voice_seconds_live(interaction.guild.id, member.id, entry)),
             inline=True,
         )
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.command(name="card")
-    async def card_cmd(self, ctx, member: discord.Member = None):
-        member = member or ctx.author
-        entry = self._entry(ctx.guild.id, member.id)
-        voice_seconds = self._voice_seconds_live(ctx.guild.id, member.id, entry)
+    @app_commands.command(name="card", description="Générer une carte de statistiques stylisée pour un membre")
+    @app_commands.describe(member="Le membre à consulter (toi par défaut)")
+    @app_commands.guild_only()
+    async def card_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
+        member = member or interaction.user
+        entry = self._entry(interaction.guild.id, member.id)
+        voice_seconds = self._voice_seconds_live(interaction.guild.id, member.id, entry)
         quote = entry.get("quote") or scooby_quote()
 
+        await interaction.response.defer()
         avatar_bytes = await member.display_avatar.with_size(256).read()
         buffer = await asyncio.to_thread(
             _render_card, member.display_name, entry["messages"], voice_seconds, quote, avatar_bytes
         )
-        await ctx.send(file=discord.File(buffer, filename="card.png"))
+        await interaction.followup.send(file=discord.File(buffer, filename="card.png"))
 
-    @commands.command(name="setquote")
-    @commands.has_permissions(administrator=True)
-    async def set_quote(self, ctx, member: discord.Member, *, quote: str):
-        entry = self._entry(ctx.guild.id, member.id)
+    @app_commands.command(name="setquote", description="Définir la citation affichée sur la carte d'un membre")
+    @app_commands.describe(member="Le membre concerné", quote="La nouvelle citation")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def set_quote(self, interaction: discord.Interaction, member: discord.Member, quote: str):
+        entry = self._entry(interaction.guild.id, member.id)
         entry["quote"] = quote
         _save_stats(self.data)
-        await ctx.send(f"✅ Citation de {member.mention} mise à jour : « {quote} »\n💬 *{scooby_quote()}*")
+        await interaction.response.send_message(f"✅ Citation de {member.mention} mise à jour : « {quote} »\n💬 *{scooby_quote()}*")
 
-    @commands.command(name="topmessages")
-    async def top_messages(self, ctx):
-        guild_data = self.data.get(str(ctx.guild.id), {})
+    @app_commands.command(name="topmessages", description="Classement des membres les plus actifs (messages)")
+    @app_commands.guild_only()
+    async def top_messages(self, interaction: discord.Interaction):
+        guild_data = self.data.get(str(interaction.guild.id), {})
         ranking = sorted(guild_data.items(), key=lambda kv: kv[1]["messages"], reverse=True)[:10]
         if not ranking:
-            await ctx.send("Aucune donnée pour l'instant.")
+            await interaction.response.send_message("Aucune donnée pour l'instant.", ephemeral=True)
             return
 
         lines = []
         for i, (user_id, entry) in enumerate(ranking, start=1):
-            member = ctx.guild.get_member(int(user_id))
+            member = interaction.guild.get_member(int(user_id))
             name = member.display_name if member else f"Utilisateur {user_id}"
             lines.append(f"{i}. **{name}** — {entry['messages']} messages")
 
         embed = discord.Embed(title="🏆 Classement des messages", description="\n".join(lines), color=discord.Color.teal())
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.command(name="topvoice")
-    async def top_voice(self, ctx):
-        guild_data = self.data.get(str(ctx.guild.id), {})
+    @app_commands.command(name="topvoice", description="Classement des membres les plus présents en vocal")
+    @app_commands.guild_only()
+    async def top_voice(self, interaction: discord.Interaction):
+        guild_data = self.data.get(str(interaction.guild.id), {})
         ranking = sorted(
             guild_data.items(),
-            key=lambda kv: self._voice_seconds_live(ctx.guild.id, kv[0], kv[1]),
+            key=lambda kv: self._voice_seconds_live(interaction.guild.id, kv[0], kv[1]),
             reverse=True,
         )[:10]
         if not ranking:
-            await ctx.send("Aucune donnée pour l'instant.")
+            await interaction.response.send_message("Aucune donnée pour l'instant.", ephemeral=True)
             return
 
         lines = []
         for i, (user_id, entry) in enumerate(ranking, start=1):
-            member = ctx.guild.get_member(int(user_id))
+            member = interaction.guild.get_member(int(user_id))
             name = member.display_name if member else f"Utilisateur {user_id}"
-            duration = _format_duration(self._voice_seconds_live(ctx.guild.id, user_id, entry))
+            duration = _format_duration(self._voice_seconds_live(interaction.guild.id, user_id, entry))
             lines.append(f"{i}. **{name}** — {duration}")
 
         embed = discord.Embed(title="🏆 Classement vocal", description="\n".join(lines), color=discord.Color.teal())
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.command(name="serverstats")
-    async def server_stats(self, ctx):
-        guild_data = self.data.get(str(ctx.guild.id), {})
+    @app_commands.command(name="serverstats", description="Afficher les statistiques globales du serveur")
+    @app_commands.guild_only()
+    async def server_stats(self, interaction: discord.Interaction):
+        guild_data = self.data.get(str(interaction.guild.id), {})
         total_messages = sum(entry["messages"] for entry in guild_data.values())
         total_voice_seconds = sum(
-            self._voice_seconds_live(ctx.guild.id, user_id, entry)
+            self._voice_seconds_live(interaction.guild.id, user_id, entry)
             for user_id, entry in guild_data.items()
         )
-        created_ts = int(ctx.guild.created_at.timestamp())
+        created_ts = int(interaction.guild.created_at.timestamp())
 
-        embed = discord.Embed(title=f"📊 Statistiques de {ctx.guild.name}", color=discord.Color.teal())
+        embed = discord.Embed(title=f"📊 Statistiques de {interaction.guild.name}", color=discord.Color.teal())
         embed.add_field(name="📅 Créé le", value=f"<t:{created_ts}:D> (<t:{created_ts}:R>)", inline=False)
-        embed.add_field(name="👥 Membres", value=str(ctx.guild.member_count), inline=True)
+        embed.add_field(name="👥 Membres", value=str(interaction.guild.member_count), inline=True)
         embed.add_field(name="💬 Messages suivis", value=str(total_messages), inline=True)
         embed.add_field(name="🎙️ Temps vocal total", value=_format_duration(total_voice_seconds), inline=True)
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.command(name="servercard")
-    async def server_card_cmd(self, ctx):
-        guild_data = self.data.get(str(ctx.guild.id), {})
+    @app_commands.command(name="servercard", description="Générer une carte de statistiques stylisée pour le serveur")
+    @app_commands.guild_only()
+    async def server_card_cmd(self, interaction: discord.Interaction):
+        guild_data = self.data.get(str(interaction.guild.id), {})
         total_messages = sum(entry["messages"] for entry in guild_data.values())
         total_voice_seconds = sum(
-            self._voice_seconds_live(ctx.guild.id, user_id, entry)
+            self._voice_seconds_live(interaction.guild.id, user_id, entry)
             for user_id, entry in guild_data.items()
         )
-        created_str = ctx.guild.created_at.strftime("%d/%m/%Y")
-        icon_bytes = await ctx.guild.icon.read() if ctx.guild.icon else None
+        created_str = interaction.guild.created_at.strftime("%d/%m/%Y")
+        icon_bytes = await interaction.guild.icon.read() if interaction.guild.icon else None
 
+        await interaction.response.defer()
         buffer = await asyncio.to_thread(
             _render_server_card,
-            ctx.guild.name,
-            ctx.guild.member_count,
+            interaction.guild.name,
+            interaction.guild.member_count,
             total_messages,
             total_voice_seconds,
             created_str,
             icon_bytes,
         )
-        await ctx.send(file=discord.File(buffer, filename="server_card.png"))
+        await interaction.followup.send(file=discord.File(buffer, filename="server_card.png"))
 
-    @commands.command(name="initialize")
-    @commands.has_permissions(administrator=True)
-    @commands.guild_only()
-    async def initialize(self, ctx, channel: discord.TextChannel = None):
-        if ctx.guild.id in self.initializing_guilds:
-            await ctx.send("⏳ Un calcul est déjà en cours sur ce serveur.")
+    @app_commands.command(name="initialize", description="Recalculer l'historique des messages depuis la création du serveur (ou d'un salon)")
+    @app_commands.describe(channel="Ne recalculer qu'un salon précis (sinon tous les salons textuels)")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def initialize(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        if interaction.guild.id in self.initializing_guilds:
+            await interaction.response.send_message("⏳ Un calcul est déjà en cours sur ce serveur.", ephemeral=True)
             return
 
-        guild_key = str(ctx.guild.id)
+        guild_key = str(interaction.guild.id)
         already_done = set(self.initialized_channels.get(guild_key, []))
         if channel is not None and str(channel.id) in already_done:
-            await ctx.send(
-                f"❌ Le salon {channel.mention} a déjà été comptabilisé par `!initialize`. "
-                "Relancer la commande créerait un doublon."
+            await interaction.response.send_message(
+                f"❌ Le salon {channel.mention} a déjà été comptabilisé par `/initialize`. "
+                "Relancer la commande créerait un doublon.",
+                ephemeral=True,
             )
             return
 
-        self.initializing_guilds.add(ctx.guild.id)
+        self.initializing_guilds.add(interaction.guild.id)
         cutoff = discord.utils.utcnow()
-        channels = [channel] if channel is not None else ctx.guild.text_channels
+        channels = [channel] if channel is not None else interaction.guild.text_channels
         scope_label = f"le salon {channel.mention}" if channel is not None else f"{len(channels)} salon(s)"
-        status = await ctx.send(
+
+        await interaction.response.defer()
+        status = await interaction.followup.send(
             f"🔎 Calcul de tous les messages envoyés depuis la création du serveur sur "
             f"{scope_label}... Ça peut prendre plusieurs minutes, merci de patienter."
         )
@@ -394,7 +411,7 @@ class Stats(commands.Cog):
             channels_done = 0
 
             for ch in channels:
-                perms = ch.permissions_for(ctx.guild.me)
+                perms = ch.permissions_for(interaction.guild.me)
                 if perms.view_channel and perms.read_message_history:
                     try:
                         async for message in ch.history(limit=None, before=cutoff, oldest_first=True):
@@ -417,12 +434,12 @@ class Stats(commands.Cog):
                 for entry in self.data.get(guild_key, {}).values():
                     entry["messages"] = 0
                 for user_id, count in counts.items():
-                    self._entry(ctx.guild.id, user_id)["messages"] = count
+                    self._entry(interaction.guild.id, user_id)["messages"] = count
                 self.initialized_channels[guild_key] = scanned_ids
             else:
                 # Un seul salon : on ajoute au total existant sans toucher aux autres salons.
                 for user_id, count in counts.items():
-                    self._entry(ctx.guild.id, user_id)["messages"] += count
+                    self._entry(interaction.guild.id, user_id)["messages"] += count
                 self.initialized_channels.setdefault(guild_key, [])
                 self.initialized_channels[guild_key].append(str(channel.id))
 
@@ -436,7 +453,7 @@ class Stats(commands.Cog):
                 )
             )
         finally:
-            self.initializing_guilds.discard(ctx.guild.id)
+            self.initializing_guilds.discard(interaction.guild.id)
 
 
 async def setup(bot):

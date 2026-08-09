@@ -23,14 +23,56 @@ FFMPEG_OPTIONS = {
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
+INACTIVITY_TIMEOUT_SECONDS = 10 * 60
+
 
 class Music(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.queues = {}
+        self.inactivity_tasks = {}
+
+    def cog_unload(self):
+        for task in self.inactivity_tasks.values():
+            task.cancel()
+        self.inactivity_tasks.clear()
 
     def _queue(self, guild_id):
         return self.queues.setdefault(guild_id, [])
+
+    def _cancel_inactivity_timer(self, guild_id):
+        task = self.inactivity_tasks.pop(guild_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _reset_inactivity_timer(self, guild: discord.Guild, channel: discord.abc.Messageable):
+        self._cancel_inactivity_timer(guild.id)
+        self.inactivity_tasks[guild.id] = asyncio.create_task(self._inactivity_watchdog(guild, channel))
+
+    async def _inactivity_watchdog(self, guild: discord.Guild, channel: discord.abc.Messageable):
+        try:
+            await asyncio.sleep(INACTIVITY_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            return
+
+        self.inactivity_tasks.pop(guild.id, None)
+        voice_client = guild.voice_client
+        if voice_client is None or (voice_client.is_playing() and not voice_client.is_paused()):
+            return
+
+        self._queue(guild.id).clear()
+        await voice_client.disconnect()
+        try:
+            await channel.send(f"👋 Déconnecté du vocal après 10 minutes d'inactivité.\n💬 *{scooby_quote()}*")
+        except discord.HTTPException:
+            pass
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member, before, after):
+        if member.id != self.bot.user.id or after.channel is not None:
+            return
+        self._cancel_inactivity_timer(member.guild.id)
+        self._queue(member.guild.id).clear()
 
     async def _extract(self, query):
         loop = asyncio.get_running_loop()
@@ -42,7 +84,10 @@ class Music(commands.Cog):
     async def _play_next(self, guild: discord.Guild, channel: discord.abc.Messageable):
         queue = self._queue(guild.id)
         voice_client = guild.voice_client
-        if not queue or voice_client is None:
+        if voice_client is None:
+            return
+        if not queue:
+            self._reset_inactivity_timer(guild, channel)
             return
 
         track = queue.pop(0)
@@ -72,6 +117,7 @@ class Music(commands.Cog):
                 )
 
         voice_client.play(source, after=after)
+        self._cancel_inactivity_timer(guild.id)
         await channel.send(f"▶️ Lecture : **{track['title']}**\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="join", description="Faire rejoindre le bot dans un salon vocal")
@@ -98,6 +144,10 @@ class Music(commands.Cog):
         except (discord.ClientException, discord.HTTPException, asyncio.TimeoutError) as e:
             await interaction.followup.send(f"❌ Impossible de rejoindre {channel.mention} : {e}")
             return
+
+        voice_client = interaction.guild.voice_client
+        if not voice_client.is_playing():
+            self._reset_inactivity_timer(interaction.guild, interaction.channel)
 
         await interaction.followup.send(f"✅ Rejoint **{channel.name}**.\n💬 *{scooby_quote()}*")
 
@@ -167,6 +217,7 @@ class Music(commands.Cog):
             await interaction.response.send_message("❌ Rien n'est en cours de lecture.", ephemeral=True)
             return
         voice_client.pause()
+        self._reset_inactivity_timer(interaction.guild, interaction.channel)
         await interaction.response.send_message(f"⏸️ Lecture en pause.\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="resume", description="Reprendre la lecture en pause")
@@ -177,6 +228,7 @@ class Music(commands.Cog):
             await interaction.response.send_message("❌ Rien n'est en pause.", ephemeral=True)
             return
         voice_client.resume()
+        self._cancel_inactivity_timer(interaction.guild.id)
         await interaction.response.send_message(f"▶️ Reprise de la lecture.\n💬 *{scooby_quote()}*")
 
     @app_commands.command(name="leave", description="Déconnecter le bot du salon vocal")
@@ -186,6 +238,7 @@ class Music(commands.Cog):
         if voice_client is None:
             await interaction.response.send_message("❌ Je ne suis pas connecté à un salon vocal.", ephemeral=True)
             return
+        self._cancel_inactivity_timer(interaction.guild.id)
         self._queue(interaction.guild.id).clear()
         await voice_client.disconnect()
         await interaction.response.send_message(f"👋 Déconnecté du vocal.\n💬 *{scooby_quote()}*")

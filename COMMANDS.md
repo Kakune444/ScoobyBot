@@ -43,6 +43,8 @@ Quand un rôle automatique est configuré, il est attribué dès qu'un membre re
 | `!resume` | Reprend la lecture. |
 | `!leave` | Déconnecte le bot du vocal et vide la file. |
 
+Le bot quitte automatiquement le salon vocal après 10 minutes d'inactivité (rien en lecture, y compris en pause) — que le salon soit vide ou non. Le minuteur se réinitialise à chaque nouvelle lecture et se coupe dès qu'on reprend la lecture (`!resume`).
+
 ## Statistiques (`cogs/stats.py`)
 
 | Commande | Permission requise | Description |

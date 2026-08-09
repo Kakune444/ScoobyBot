@@ -93,6 +93,8 @@ Format de chaque rôle : `@mention | emoji | label`, séparés par `;`. Ça gén
 - `!pause` / `!resume` — pause / reprise
 - `!leave` — quitte le vocal et vide la file
 
+Le bot quitte automatiquement le vocal après 10 minutes sans rien en lecture (pause comprise), que le salon soit vide ou non.
+
 ### Statistiques
 
 Le suivi des messages et du temps vocal se fait automatiquement, aucune commande à lancer. Sauvegarde automatique toutes les 5 minutes, sauf entre 4h et 14h (heure de Paris) où elle passe à toutes les heures, plus une sauvegarde à l'arrêt propre du bot.

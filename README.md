@@ -104,13 +104,13 @@ Le bot quitte automatiquement le vocal après 10 minutes sans rien en lecture (p
 
 ### Statistiques
 
-Le suivi (messages, vocal, réactions, invitations, boosts, commandes) se fait automatiquement en arrière-plan et s'écrit dans Supabase événement par événement — aucune commande à lancer pour l'alimenter, et les commandes ci-dessous lisent directement Supabase sans jamais rescanner l'historique Discord.
+Le suivi (messages, vocal, réactions, invitations, boosts, commandes) se fait automatiquement en arrière-plan et s'écrit dans Supabase événement par événement — aucune commande à lancer pour l'alimenter, et les commandes ci-dessous lisent directement Supabase sans jamais rescanner l'historique Discord. Chaque commande répond avec une seule image (card générée avec Pillow/matplotlib, style dashboard sombre) plutôt qu'un embed et des graphiques séparés.
 
 - `/serverstat [periode]` — vue d'ensemble du serveur : messages/vocal 7j-30j-Tout, classements salons et membres, contributeurs actifs, membres les plus réactifs, jour le plus actif, dates clés, graphiques d'activité
 - `/userstat [membre] [periode]` — vue d'ensemble d'un membre : messages/vocal, classement serveur, salons préférés, streak, emojis favoris, dates, graphiques
 - `/channelstat [salon] [periode]` — vue d'ensemble d'un salon (texte ou vocal) : activité, top membres, graphique dans le temps
 
-`periode` (`7 jours` / `30 jours` / `Tout`, défaut 30 jours) filtre les classements et graphiques ; les totaux 7j/30j/Tout en tête d'embed restent toujours affichés ensemble.
+`periode` (`7 jours` / `30 jours` / `Tout`, défaut 30 jours) filtre les classements et graphiques affichés dans la card ; les totaux 7j/30j/Tout en tête de card restent toujours affichés ensemble.
 
 Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COMMANDS.md).
 
@@ -122,6 +122,7 @@ Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COM
 ScoobyBot/
 ├── bot.py                     point d'entrée, charge les cogs, sync des slash commands
 ├── supabase_client.py         client Supabase (lecture/écriture) partagé par les cogs
+├── cardkit.py                  moteur de layout (Pillow + matplotlib) pour les cards stats — un PNG par commande
 ├── supabase/
 │   └── schema.sql              schéma complet (tables + fonctions) à exécuter une fois sur le projet Supabase
 ├── cogs/
@@ -129,7 +130,7 @@ ScoobyBot/
 │   ├── roles.py                menu de rôles par bouton
 │   ├── music.py                lecteur de musique + file d'attente + auto-disconnect
 │   ├── stats.py                capture des événements (messages, vocal, réactions, invitations, boosts) → Supabase
-│   ├── statcommands.py         /serverstat /userstat /channelstat — lecture Supabase + graphiques
+│   ├── statcommands.py         /serverstat /userstat /channelstat — lecture Supabase + composition de la card (cardkit.py)
 │   ├── blabla.py                réponse automatique aux pavés de texte
 │   └── scooby_quotes.py        répliques de Scooby-Doo affichées après chaque action
 ├── data/

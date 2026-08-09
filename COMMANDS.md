@@ -47,11 +47,13 @@ Quand un rôle automatique est configuré, il est attribué dès qu'un membre re
 
 Le bot quitte automatiquement le salon vocal après **10 minutes d'inactivité** (rien en lecture, y compris en pause) — que le salon soit vide ou non. Le minuteur se réinitialise à chaque nouvelle lecture et se coupe dès qu'on reprend la lecture (`/resume`).
 
-## Statistiques (`cogs/stats.py` + `cogs/statcommands.py`)
+## Statistiques (`cogs/stats.py` + `cogs/statcommands.py` + `cardkit.py`)
 
-Le suivi (messages, sessions vocales, réactions, invitations, boosts, commandes utilisées) se fait automatiquement en arrière-plan et s'écrit événement par événement dans Supabase — aucune commande à lancer pour ça, et aucun recalcul depuis l'historique Discord au moment de consulter les stats (`cogs/stats.py` capture les événements, `cogs/statcommands.py` ne fait que lire).
+Le suivi (messages, sessions vocales, réactions, invitations, boosts, commandes utilisées) se fait automatiquement en arrière-plan et s'écrit événement par événement dans Supabase — aucune commande à lancer pour ça, et aucun recalcul depuis l'historique Discord au moment de consulter les stats (`cogs/stats.py` capture les événements, `cogs/statcommands.py` ne fait que lire et compose une image via `cardkit.py`).
 
-Les trois commandes de lecture prennent un paramètre optionnel **`periode`** (`7 jours` / `30 jours` / `Tout`, défaut `30 jours`) qui filtre les classements, salons et graphiques affichés — les totaux 7j/30j/Tout en tête d'embed, eux, sont toujours affichés ensemble.
+Chaque commande répond avec **une seule image** (une "card" générée avec Pillow/matplotlib, style dashboard sombre) regroupant chiffres, classements et graphiques — pas d'embed Discord séparé, juste un titre minimal dans le message.
+
+Les trois commandes de lecture prennent un paramètre optionnel **`periode`** (`7 jours` / `30 jours` / `Tout`, défaut `30 jours`) qui filtre les classements, salons et graphiques affichés dans la card — les totaux 7j/30j/Tout en tête de card, eux, sont toujours affichés ensemble.
 
 | Commande | Description |
 |---|---|

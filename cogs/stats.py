@@ -1,6 +1,7 @@
 import asyncio
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Union
 
 import discord
 import emoji
@@ -252,11 +253,10 @@ class Stats(commands.Cog):
 
     # -- commandes manuelles (admin) -----------------------------------------------
 
-    @app_commands.command(name="initialize", description="Importer l'historique des messages d'un salon (ou de tous) dans les statistiques")
-    @app_commands.describe(channel="Ne scanner qu'un salon précis (sinon tous les salons textuels)")
-    @app_commands.guild_only()
-    @app_commands.default_permissions(administrator=True)
-    async def initialize(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+    async def _import_history(self, interaction: discord.Interaction, channels: list, scope_label: str):
+        """Scanne l'historique des salons donnés et importe les messages dans
+        Supabase. Idempotent (message_id en clé primaire) : relançable sans
+        jamais créer de doublon. Un seul import à la fois par serveur."""
         guild = interaction.guild
         if guild.id in self._initializing_guilds:
             await interaction.response.send_message("⏳ Un import est déjà en cours sur ce serveur.", ephemeral=True)
@@ -265,8 +265,6 @@ class Stats(commands.Cog):
         self._initializing_guilds.add(guild.id)
         try:
             cutoff = discord.utils.utcnow()
-            channels = [channel] if channel is not None else guild.text_channels
-            scope_label = f"le salon {channel.mention}" if channel is not None else f"{len(channels)} salon(s)"
 
             await interaction.response.defer()
             status = await interaction.followup.send(
@@ -301,7 +299,7 @@ class Stats(commands.Cog):
                             pass
 
                     channels_done += 1
-                    if channel is None and (channels_done % 3 == 0 or channels_done == len(channels)):
+                    if len(channels) > 1 and (channels_done % 3 == 0 or channels_done == len(channels)):
                         await status.edit(content=f"🔎 Import en cours... {channels_done}/{len(channels)} salons traités, {total} messages traités jusqu'ici.")
 
                 if buffer:
@@ -312,6 +310,28 @@ class Stats(commands.Cog):
                 await status.edit(content=f"❌ L'import a échoué en cours de route : {e}")
         finally:
             self._initializing_guilds.discard(guild.id)
+
+    @app_commands.command(name="initialize", description="Importer l'historique des messages d'un salon dans les statistiques")
+    @app_commands.describe(channel="Le salon à scanner (texte, vocal ou fil)")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def initialize(
+        self,
+        interaction: discord.Interaction,
+        channel: Union[discord.TextChannel, discord.VoiceChannel, discord.Thread],
+    ):
+        await self._import_history(interaction, [channel], f"le salon {channel.mention}")
+
+    @app_commands.command(name="initializeall", description="Importer l'historique des messages de tous les salons du serveur")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def initializeall(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        # Tout ce qui contient des messages : salons texte (annonces comprises),
+        # chat des salons vocaux et des stages, et fils actuellement actifs.
+        # Limite connue : les fils archivés ne sont pas parcourus.
+        channels = [*guild.text_channels, *guild.voice_channels, *guild.stage_channels, *guild.threads]
+        await self._import_history(interaction, channels, f"{len(channels)} salon(s)")
 
     @app_commands.command(name="addtime", description="Ajouter manuellement du temps vocal à un membre (rattrapage / correction)")
     @app_commands.describe(salon="Le salon vocal concerné", membre="Le membre à créditer", minutes="Le nombre de minutes à ajouter")

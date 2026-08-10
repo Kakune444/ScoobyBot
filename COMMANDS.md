@@ -72,6 +72,7 @@ Réservées aux administrateurs — corrigent ou complètent les données Supaba
 | `/initialize <channel>` | Scanne l'historique des messages d'un salon (texte, vocal ou fil) et l'importe dans Supabase. Idempotent : chaque message n'est compté qu'une fois (`message_id` en clé primaire), donc relancer la commande — même sur un salon déjà importé — ne crée jamais de doublon. Peut prendre plusieurs minutes sur un gros historique. |
 | `/initializeall` | Comme `/initialize`, mais sur **tout le serveur** : salons texte (annonces comprises), chat des salons vocaux et des stages, et fils actifs (les fils archivés ne sont pas parcourus). Idempotent aussi ; un seul import à la fois par serveur. |
 | `/addtime <salon> <membre> <minutes>` | Crédite manuellement `minutes` de temps vocal à `membre` dans `salon` (rattrapage d'une session non trackée, correction). Insère une session vocale synthétique déjà close ; répond avec les nouveaux totaux du membre. |
+| `/importvoice <membres> <salons>` | Importe l'historique vocal depuis deux CSV Statbot joints (heures par membre + heures par salon, colonnes `rank,name/username,id,count`). Les totaux par membre et par salon sont conservés exactement ; le croisement membre↔salon est réparti au prorata (le CSV ne le contient pas). Les sessions synthétiques sont datées plus de 30 jours avant l'arrivée du bot : elles ne comptent que dans « Tout », jamais dans les fenêtres 7j/14j/30j. Relançable — chaque exécution remplace la précédente. |
 
 ## Blabla (`cogs/blabla.py`)
 

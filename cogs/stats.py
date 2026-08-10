@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Union
@@ -11,6 +13,8 @@ from discord.ext import commands
 from cogs.scooby_quotes import scooby_quote
 from supabase_client import (
     bulk_insert_messages,
+    bulk_insert_voice_sessions,
+    delete_voice_sessions_ending_at,
     close_voice_session,
     delete_invite,
     end_boost,
@@ -41,6 +45,22 @@ def _format_duration(seconds: float) -> str:
     if hours:
         return f"{hours}h{minutes:02d}"
     return f"{minutes}min"
+
+
+def _parse_statbot_csv(data: bytes) -> dict[int, float]:
+    """CSV export Statbot (colonnes rank, name/username, id, count) → {id: count}.
+    Seules les colonnes id et count sont lues : l'encodage souvent cabossé des
+    noms avec emojis n'a aucun impact."""
+    text = data.decode("utf-8-sig", errors="replace")
+    totals: dict[int, float] = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        try:
+            entry_id = int(row["id"])
+            count = float(row["count"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        totals[entry_id] = totals.get(entry_id, 0.0) + count
+    return totals
 
 
 def _extract_emojis(content: str) -> list[dict]:
@@ -363,6 +383,83 @@ class Stats(commands.Cog):
             f"Total de {membre.mention} dans ce salon (Tout) : **{_format_duration(total_salon)}**\n"
             f"Total de {membre.mention} tous salons (Tout) : **{_format_duration(total_membre)}**\n"
             f"💬 *{scooby_quote()}*"
+        )
+
+    @app_commands.command(name="importvoice", description="Importer des totaux d'heures vocales depuis des CSV Statbot (membres + salons)")
+    @app_commands.describe(
+        membres="CSV des heures vocales par membre (colonnes rank, username, id, count — count en heures)",
+        salons="CSV des heures vocales par salon (colonnes rank, name, id, count — count en heures)",
+    )
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def importvoice(self, interaction: discord.Interaction, membres: discord.Attachment, salons: discord.Attachment):
+        guild = interaction.guild
+        await interaction.response.defer()
+
+        try:
+            member_hours = _parse_statbot_csv(await membres.read())
+            channel_hours = _parse_statbot_csv(await salons.read())
+        except Exception as e:
+            await interaction.followup.send(f"❌ Impossible de lire les CSV : {e}")
+            return
+        if not member_hours or not channel_hours:
+            await interaction.followup.send(
+                "❌ Aucune ligne exploitable trouvée — vérifie que les fichiers sont bien "
+                "les exports Statbot avec les colonnes `rank,name/username,id,count`."
+            )
+            return
+
+        total_member_hours = sum(member_hours.values())
+        total_channel_hours = sum(channel_hours.values())
+
+        # Le CSV ne donne que les totaux par membre ET par salon, jamais le
+        # croisement membre×salon : on répartit les heures de chaque membre au
+        # prorata du poids de chaque salon. Les deux totaux (par membre et par
+        # salon) restent exacts ; seul le croisement est une estimation.
+        #
+        # Toutes les sessions synthétiques se terminent au même instant, placé
+        # 31 jours AVANT l'arrivée du bot : comme les fenêtres 7j/14j/30j
+        # reculent d'au plus 30 jours depuis maintenant (et « maintenant »
+        # avance), elles ne peuvent jamais y entrer — cet historique ne compte
+        # que dans « Tout ». Ce left_at commun et stable (dérivé de joined_at,
+        # pas de l'heure d'exécution) sert aussi de marqueur pour rendre
+        # l'import relançable sans doublon.
+        anchor = guild.me.joined_at or discord.utils.utcnow()
+        end = anchor - timedelta(days=31)
+        await delete_voice_sessions_ending_at(guild_id=guild.id, left_at=end)
+
+        rows = []
+        for user_id, hours in member_hours.items():
+            for channel_id, channel_weight in channel_hours.items():
+                seconds = hours * 3600 * (channel_weight / total_channel_hours)
+                if seconds < 1:
+                    continue
+                rows.append({
+                    "guild_id": guild.id,
+                    "user_id": user_id,
+                    "channel_id": channel_id,
+                    "joined_at": end - timedelta(seconds=seconds),
+                    "left_at": end,
+                })
+        inserted = await bulk_insert_voice_sessions(rows)
+
+        gap_warning = ""
+        if total_channel_hours and abs(total_member_hours - total_channel_hours) / total_channel_hours > 0.02:
+            gap_warning = (
+                f"\n⚠️ Les deux CSV ne totalisent pas pareil "
+                f"({_format_duration(total_member_hours * 3600)} côté membres vs "
+                f"{_format_duration(total_channel_hours * 3600)} côté salons) — "
+                "vérifie qu'ils viennent du même export."
+            )
+
+        await interaction.followup.send(
+            f"✅ Import vocal terminé : **{_format_duration(total_member_hours * 3600)}** répartis sur "
+            f"{len(member_hours)} membres et {len(channel_hours)} salons "
+            f"({inserted} sessions synthétiques, antérieures au {end.strftime('%d/%m/%Y')}).\n"
+            "-# Relancer la commande remplace le précédent import au lieu de s'y ajouter. "
+            "Le croisement membre↔salon est estimé au prorata (le CSV ne le contient pas) ; "
+            "les totaux par membre et par salon, eux, sont exacts."
+            f"{gap_warning}\n💬 *{scooby_quote()}*"
         )
 
     # -- réconciliation au démarrage ----------------------------------------------

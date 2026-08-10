@@ -109,6 +109,37 @@ async def insert_completed_voice_session(*, guild_id, user_id, channel_id, joine
     }).execute()
 
 
+async def bulk_insert_voice_sessions(rows: list[dict]) -> int:
+    """rows : [{"guild_id", "user_id", "channel_id", "joined_at": datetime, "left_at": datetime}, ...]
+    Sessions déjà closes, insérées par lots — utilisé par /importvoice."""
+    if not rows:
+        return 0
+    client = await get_client()
+    chunk_size = 500
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i:i + chunk_size]
+        payload = [
+            {**row, "joined_at": row["joined_at"].isoformat(), "left_at": row["left_at"].isoformat()}
+            for row in chunk
+        ]
+        await client.table("voice_sessions").insert(payload).execute()
+    return len(rows)
+
+
+async def delete_voice_sessions_ending_at(*, guild_id, left_at):
+    """Supprime les sessions se terminant exactement à left_at. Toutes les sessions
+    synthétiques d'un /importvoice partagent le même left_at (leur marqueur) :
+    les effacer avant de réinsérer rend l'import relançable sans doublon."""
+    client = await get_client()
+    await (
+        client.table("voice_sessions")
+        .delete()
+        .eq("guild_id", guild_id)
+        .eq("left_at", left_at.isoformat())
+        .execute()
+    )
+
+
 async def get_open_voice_sessions(*, guild_id):
     """Returns [{"user_id": ..., "channel_id": ...}, ...] for every session still open in this guild."""
     client = await get_client()

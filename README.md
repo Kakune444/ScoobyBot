@@ -112,10 +112,11 @@ Le suivi (messages, vocal, réactions, invitations, boosts, commandes) se fait a
 
 `periode` (`7 jours` / `14 jours` / `30 jours` / `Tout`, défaut **14 jours**) pilote toute la card ; les trois sous-fenêtres des blocs chiffres s'y adaptent (ex. 14j → 1j/7j/14j).
 
-Trois commandes admin complètent les données au lieu de simplement les lire :
+Quatre commandes admin complètent les données au lieu de simplement les lire :
 - `/initialize <salon>` — importe l'historique des messages d'un salon (texte, vocal ou fil) dans Supabase ; sans risque de doublon même en relançant la commande plus tard
 - `/initializeall` — pareil, mais sur tout le serveur d'un coup (salons texte, chat des vocaux, fils actifs)
 - `/addtime <salon> <membre> <minutes>` — crédite manuellement du temps vocal à un membre (rattrapage, correction)
+- `/importvoice <membres> <salons>` — importe l'historique vocal depuis deux CSV Statbot joints (l'historique vocal n'étant pas reconstituable via l'API Discord, contrairement aux messages)
 
 Référence complète et à jour de toutes les commandes : [`COMMANDS.md`](./COMMANDS.md).
 

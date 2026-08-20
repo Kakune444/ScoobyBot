@@ -121,6 +121,28 @@ async def get_coin_balance(*, guild_id, user_id) -> float:
     return float(result.data or 0)
 
 
+async def play_slots(*, game_id, guild_id, user_id, bet, reel_1, reel_2, reel_3, result, payout) -> dict:
+    """Débite la mise, crédite le retour et journalise la partie atomiquement."""
+    client = await get_client()
+    response = await client.rpc("play_slots", {
+        "p_game_id": str(game_id),
+        "p_guild_id": guild_id,
+        "p_user_id": user_id,
+        "p_bet": bet,
+        "p_reel_1": reel_1,
+        "p_reel_2": reel_2,
+        "p_reel_3": reel_3,
+        "p_result": result,
+        "p_payout": payout,
+    }).execute()
+    row = response.data[0] if isinstance(response.data, list) else response.data
+    return {
+        "balance": float(row["new_balance"]),
+        "payout": float(row["payout"]),
+        "net": float(row["net"]),
+    }
+
+
 async def insert_completed_voice_session(*, guild_id, user_id, channel_id, joined_at, left_at):
     """Session déjà close, insérée directement — utilisé par /addtime pour créditer du temps manuellement."""
     client = await get_client()

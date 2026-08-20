@@ -125,8 +125,9 @@ Le bot quitte automatiquement le vocal après 10 minutes sans rien en lecture (p
 ### Économie
 
 - `/balance` — affiche ton solde de coins sur le serveur actuel
+- `/slots <mise>` — joue à la machine à sous avec une mise fixe de 1, 5, 10 ou 100 coins
 
-Les membres gagnent **5 coins par heure de vocal**, au prorata du temps réellement passé, et **0,5 coin par message**. Le temps de vocal actif est inclus immédiatement dans `/balance`, puis enregistré comme transaction à la déconnexion. Les messages des bots, les commandes adressées au bot, les doublons identiques dans les 30 secondes et le sixième message (ou suivant) envoyé dans une fenêtre de 10 secondes ne rapportent rien. Les soldes sont persistants dans Supabase et séparés serveur par serveur.
+Les membres gagnent **5 coins par heure de vocal**, au prorata du temps réellement passé, et **0,5 coin par message**. Le temps de vocal actif est inclus immédiatement dans `/balance`, puis enregistré comme transaction à la déconnexion. Les messages des bots, les commandes adressées au bot, les doublons identiques dans les 30 secondes et le sixième message (ou suivant) envoyé dans une fenêtre de 10 secondes ne rapportent rien. Les soldes sont persistants dans Supabase et séparés serveur par serveur. `/slots` utilise des rouleaux pondérés, une animation en card et un RTP théorique de **99,8848 %** ; les parties sont enregistrées dans `slot_games`.
 
 ### Statistiques
 
@@ -156,12 +157,12 @@ ScoobyBot/
 ├── supabase_client.py         client Supabase (lecture/écriture) partagé par les cogs
 ├── cardkit.py                  rendu des cards stats (Pillow, 1280×708, layout Statbot) + emojis Twemoji
 ├── supabase/
-│   └── economy.sql             table des soldes + dictionnaire JSONB des transactions
+│   └── economy.sql             soldes, transactions JSONB + journal des parties slots
 ├── cogs/
 │   ├── moderation.py           kick, ban, mute, warn, purge, slowmode
 │   ├── roles.py                menu de rôles par bouton
 │   ├── music.py                lecteur de musique + file d'attente + auto-disconnect
-│   ├── economy.py              gains de coins + /balance + anti-spam
+│   ├── economy.py              gains de coins + /balance + /slots + anti-spam
 │   ├── stats.py                capture des événements (messages, vocal, réactions, invitations, boosts) → Supabase
 │   ├── statcommands.py         /serverstat /userstat /channelstat — lecture Supabase + composition de la card (cardkit.py)
 │   ├── blabla.py                réponse automatique aux pavés de texte

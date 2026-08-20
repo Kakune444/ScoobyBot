@@ -1,13 +1,23 @@
+import asyncio
 import hashlib
+import random
 import re
+import uuid
 from collections import defaultdict, deque
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cardkit import collect_emojis, fetch_emoji_images, render_slots_card, to_discord_file
 from cogs.scooby_quotes import scooby_quote
-from supabase_client import award_coins, close_voice_session, fire_and_forget, get_coin_balance
+from supabase_client import (
+    award_coins,
+    close_voice_session,
+    fire_and_forget,
+    get_coin_balance,
+    play_slots,
+)
 
 
 MESSAGE_REWARD = 0.5
@@ -16,9 +26,62 @@ SPAM_WINDOW_SECONDS = 10
 SPAM_MAX_MESSAGES = 5
 DUPLICATE_WINDOW_SECONDS = 30
 
+# Probabilités validées avant implémentation : les poids totalisent 100.
+# Les gains sont des retours bruts (mise comprise), pas des gains nets.
+SLOT_SYMBOLS = ("🍒", "🍋", "🍇", "🔔", "💎", "7️⃣")
+SLOT_WEIGHTS = (30, 24, 18, 12, 10, 6)
+SLOT_PAIR_MULTIPLIER = 1.6
+SLOT_TRIPLE_MULTIPLIERS = {
+    "🍒": 4,
+    "🍋": 5,
+    "🍇": 6,
+    "🔔": 8,
+    "💎": 10,
+    "7️⃣": 12,
+}
+SLOT_BETS = (1, 5, 10, 100)
+SLOT_ANIMATION_FRAMES = 9
+SLOT_ANIMATION_INTERVAL = 0.30
+_SLOT_RNG = random.SystemRandom()
+
 
 def _format_coins(amount: float) -> str:
     return f"{amount:.2f}".rstrip("0").rstrip(".")
+
+
+def _random_slot_symbol() -> str:
+    return _SLOT_RNG.choices(SLOT_SYMBOLS, weights=SLOT_WEIGHTS, k=1)[0]
+
+
+def _spin_slot() -> list[str]:
+    return [_random_slot_symbol() for _ in range(3)]
+
+
+def _evaluate_slot(reels: list[str]) -> tuple[str, float]:
+    """Retourne le type de résultat et le multiplicateur de retour brut."""
+    if reels[0] == reels[1] == reels[2]:
+        return f"triple_{reels[0]}", SLOT_TRIPLE_MULTIPLIERS[reels[0]]
+    if reels[0] == reels[1] or reels[0] == reels[2] or reels[1] == reels[2]:
+        return "pair", SLOT_PAIR_MULTIPLIER
+    return "loss", 0
+
+
+def _slot_result_text(result: str, reels: list[str], net: float) -> str:
+    if result == "loss":
+        return f"PERDU  •  -{_format_coins(abs(net))} coins"
+    if result == "pair":
+        return f"PAIRE  •  +{_format_coins(net)} coins"
+    return f"TRIPLE {reels[0]}  •  +{_format_coins(net)} coins"
+
+
+def _slot_animation_status(frame: int) -> str:
+    if frame < 2:
+        return "🎰 Les rouleaux tournent…"
+    if frame < 5:
+        return "Rouleau 1 arrêté…"
+    if frame < 9:
+        return "Rouleaux 1 et 2 arrêtés…"
+    return "Résultat"
 
 
 class Economy(commands.Cog):
@@ -89,6 +152,121 @@ class Economy(commands.Cog):
             left_at=discord.utils.utcnow(),
             coins_per_hour=VOICE_COINS_PER_HOUR,
         ))
+
+    @app_commands.command(name="slots", description="Jouer à la machine à sous")
+    @app_commands.describe(mise="Mise fixe : 1, 5, 10 ou 100 coins")
+    @app_commands.choices(
+        mise=[app_commands.Choice(name=f"{bet} coins", value=bet) for bet in SLOT_BETS]
+    )
+    @app_commands.guild_only()
+    async def slots(self, interaction: discord.Interaction, mise: app_commands.Choice[int]):
+        """Joue un spin et applique le débit/crédit dans une RPC atomique."""
+        bet = mise.value
+        guild_id = interaction.guild.id
+        user_id = interaction.user.id
+
+        await interaction.response.defer()
+
+        try:
+            balance_before = await get_coin_balance(guild_id=guild_id, user_id=user_id)
+        except Exception as error:
+            print(f"Erreur Supabase (lecture solde slots) : {error}")
+            await interaction.followup.send(
+                "Impossible de vérifier ton solde pour le moment. Réessaie dans quelques instants.",
+                ephemeral=True,
+            )
+            return
+
+        if balance_before < bet:
+            await interaction.followup.send(
+                f"Solde insuffisant : il te faut **{_format_coins(bet)} coins** "
+                f"et tu en as **{_format_coins(balance_before)}**.",
+                ephemeral=True,
+            )
+            return
+
+        reels = _spin_slot()
+        result, multiplier = _evaluate_slot(reels)
+        payout = round(bet * multiplier, 2)
+        game_id = str(uuid.uuid4())
+
+        try:
+            outcome = await play_slots(
+                game_id=game_id,
+                guild_id=guild_id,
+                user_id=user_id,
+                bet=bet,
+                reel_1=reels[0],
+                reel_2=reels[1],
+                reel_3=reels[2],
+                result=result,
+                payout=payout,
+            )
+        except Exception as error:
+            if "INSUFFICIENT_COINS" in str(error):
+                await interaction.followup.send(
+                    "Ton solde a changé entre-temps : tu n'as plus assez de coins pour cette mise.",
+                    ephemeral=True,
+                )
+                return
+            print(f"Erreur Supabase (partie slots) : {error}")
+            await interaction.followup.send(
+                "La partie n'a pas pu être enregistrée. Aucun coin n'a été débité.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            emoji_map = await fetch_emoji_images(collect_emojis(*SLOT_SYMBOLS, "🎰"))
+        except Exception as error:
+            # La partie est déjà enregistrée ; une panne du CDN ne doit pas
+            # empêcher l'envoi de la card (les emojis seront simplement omis).
+            print(f"Erreur Twemoji (animation slots) : {error}")
+            emoji_map = {}
+        animated_reels = _spin_slot()
+        image = render_slots_card(
+            reels=animated_reels,
+            balance=balance_before,
+            bet=bet,
+            status="🎰 Les rouleaux tournent…",
+            emoji_map=emoji_map,
+        )
+        message = await interaction.followup.send(
+            file=to_discord_file(image, "slots.png"),
+            wait=True,
+        )
+
+        # 0,6 s avant le premier arrêt, puis 0,9 s et enfin 1,2 s :
+        # les rouleaux s'arrêtent progressivement sans mitrailler Discord.
+        stop_frames = (2, 5, 9)
+        for frame in range(1, SLOT_ANIMATION_FRAMES + 1):
+            await asyncio.sleep(SLOT_ANIMATION_INTERVAL)
+            animated_reels = [
+                reels[index] if frame >= stop_frames[index] else _random_slot_symbol()
+                for index in range(3)
+            ]
+            is_final = frame == SLOT_ANIMATION_FRAMES
+            status = (
+                _slot_result_text(result, reels, outcome["net"])
+                if is_final
+                else _slot_animation_status(frame)
+            )
+            image = render_slots_card(
+                reels=animated_reels,
+                balance=outcome["balance"] if is_final else balance_before,
+                bet=bet,
+                status=status,
+                payout=outcome["payout"] if is_final else None,
+                net=outcome["net"] if is_final else None,
+                emoji_map=emoji_map,
+            )
+            try:
+                await message.edit(
+                    attachments=[to_discord_file(image, "slots.png")]
+                )
+            except discord.HTTPException as error:
+                print(f"Erreur Discord (animation slots) : {error}")
+                break
 
     @app_commands.command(name="balance", description="Afficher ton solde de coins")
     @app_commands.guild_only()

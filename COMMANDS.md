@@ -54,6 +54,7 @@ Les gains sont séparés par serveur et persistants dans Supabase : **5 coins pa
 | Commande | Description |
 |---|---|
 | `/balance` | Affiche le solde de coins de l'utilisateur sur le serveur actuel. |
+| `/slots <mise>` | Joue à la machine à sous avec une mise de 1, 5, 10 ou 100 coins. |
 
 ## Statistiques (`cogs/stats.py` + `cogs/statcommands.py` + `cardkit.py`)
 

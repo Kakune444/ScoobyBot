@@ -488,6 +488,126 @@ def render_card(data: CardData, emoji_map: dict) -> Image.Image:
     return canvas.convert("RGB").resize((CARD_W, CARD_H), Image.LANCZOS)
 
 
+def render_slots_card(
+    *,
+    reels: list[str],
+    balance: float,
+    bet: int,
+    status: str,
+    emoji_map: dict,
+    payout: float | None = None,
+    net: float | None = None,
+) -> Image.Image:
+    """Rendu de la machine à sous dans le même langage visuel que les stats."""
+    canvas = Image.new("RGBA", (_s(CARD_W), _s(CARD_H)), PAGE_BG)
+    draw = ImageDraw.Draw(canvas)
+
+    draw.text(
+        (_s(48), _s(48)),
+        "SCOOBY SLOTS",
+        font=_font("bold", 34),
+        fill=INK,
+        anchor="lm",
+    )
+    draw.text(
+        (_s(1232), _s(48)),
+        f"Solde : {_format_card_coins(balance)} coins",
+        font=_font("bold", 25),
+        fill=INK_SOFT,
+        anchor="rm",
+    )
+
+    panel_x, panel_y, panel_w, panel_h = 76, 116, 1128, 410
+    draw.rounded_rectangle(
+        (_s(panel_x), _s(panel_y), _s(panel_x + panel_w), _s(panel_y + panel_h)),
+        radius=_s(24),
+        fill=BLOCK_BG,
+    )
+    draw.text(
+        (_s(112), _s(151)),
+        "MACHINE À SOUS",
+        font=_font("bold", 22),
+        fill=INK_MUTED,
+        anchor="lm",
+    )
+    draw.text(
+        (_s(1168), _s(151)),
+        f"Mise : {_format_card_coins(bet)} coin{'s' if bet != 1 else ''}",
+        font=_font("bold", 22),
+        fill=INK_SOFT,
+        anchor="rm",
+    )
+
+    cell_w, cell_h, gap = 292, 238, 22
+    total_w = 3 * cell_w + 2 * gap
+    first_x = panel_x + (panel_w - total_w) / 2
+    reel_font = _font("bold", 82)
+    emoji_size = _s(94)
+    for index, symbol in enumerate(reels):
+        x = first_x + index * (cell_w + gap)
+        draw.rounded_rectangle(
+            (_s(x), _s(194), _s(x + cell_w), _s(194 + cell_h)),
+            radius=_s(18),
+            fill=ROW_DARK,
+            outline=BADGE_LABEL_BG,
+            width=_s(2),
+        )
+        width = _rich_width(draw, symbol, reel_font, emoji_map, emoji_size)
+        if width:
+            draw_rich_text(
+                canvas,
+                draw,
+                _s(x + cell_w / 2) - width / 2,
+                _s(313),
+                symbol,
+                reel_font,
+                INK,
+                emoji_map,
+                emoji_size,
+            )
+        else:
+            draw.text(
+                (_s(x + cell_w / 2), _s(313)),
+                symbol,
+                font=reel_font,
+                fill=INK,
+                anchor="mm",
+            )
+
+    status_fill = INK_SOFT
+    if net is not None:
+        status_fill = SERIES_MESSAGES if net > 0 else (226, 82, 96, 255)
+    status_font = _font("bold", 29)
+    status_emoji_size = _s(31)
+    status_width = _rich_width(draw, status, status_font, emoji_map, status_emoji_size)
+    draw_rich_text(
+        canvas,
+        draw,
+        _s(CARD_W / 2) - status_width / 2,
+        _s(584),
+        status,
+        status_font,
+        status_fill,
+        emoji_map,
+        status_emoji_size,
+    )
+
+    if payout is not None:
+        draw.text(
+            (_s(CARD_W / 2), _s(638)),
+            f"Retour brut : {_format_card_coins(payout)} coins  •  Nouveau solde : {_format_card_coins(balance)} coins",
+            font=_font("regular", 21),
+            fill=INK_MUTED,
+            anchor="mm",
+        )
+
+    return canvas.convert("RGB").resize((CARD_W, CARD_H), Image.LANCZOS)
+
+
+def _format_card_coins(amount: float) -> str:
+    return f"{amount:.2f}".rstrip("0").rstrip(".")
+
+
 def to_discord_file(image: Image.Image, filename: str):
     import discord  # import tardif : évite de charger discord.py pour un usage hors-bot éventuel
 

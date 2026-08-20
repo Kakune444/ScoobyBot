@@ -114,17 +114,11 @@ async def award_coins(*, guild_id, user_id, amount, reason, source_id):
 
 async def get_coin_balance(*, guild_id, user_id) -> float:
     client = await get_client()
-    result = (
-        await client.table("members")
-        .select("coins")
-        .eq("guild_id", guild_id)
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
-    )
-    if not result.data:
-        return 0.0
-    return float(result.data[0].get("coins") or 0)
+    result = await client.rpc("get_coin_balance", {
+        "p_guild_id": guild_id,
+        "p_user_id": user_id,
+    }).execute()
+    return float(result.data or 0)
 
 
 async def insert_completed_voice_session(*, guild_id, user_id, channel_id, joined_at, left_at):

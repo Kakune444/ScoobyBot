@@ -58,9 +58,8 @@ Puis édite `.env` avec ton token Discord et tes identifiants Supabase (voir sec
 ### Configurer Supabase
 
 1. Crée un projet sur [supabase.com](https://supabase.com)
-2. Dans le SQL Editor du projet, colle le contenu de [`supabase/schema.sql`](./supabase/schema.sql) et exécute-le (une seule fois) — ça crée les tables et fonctions nécessaires aux stats.
-3. Colle ensuite [`supabase/economy.sql`](./supabase/economy.sql) et exécute-le — cette migration peut être relancée et ajoute le système de coins.
-4. Dans Project Settings > API, récupère l'**URL du projet** (`SUPABASE_URL`) et la clé **`service_role`** (`SUPABASE_KEY`) — surtout pas la clé `anon`/publique, la `service_role` a le même niveau de sensibilité que `DISCORD_TOKEN` et ne doit jamais être commitée ni exposée côté client
+2. Dans le SQL Editor du projet, colle [`supabase/economy.sql`](./supabase/economy.sql) et exécute-le — cette migration crée une ligne `coin_balances` par membre et peut être relancée. Elle suppose que les tables statistiques `members` et `voice_sessions` existent déjà.
+3. Dans Project Settings > API, récupère l'**URL du projet** (`SUPABASE_URL`) et la clé **`service_role`** (`SUPABASE_KEY`) — surtout pas la clé `anon`/publique, la `service_role` a le même niveau de sensibilité que `DISCORD_TOKEN` et ne doit jamais être commitée ni exposée côté client
 
 ### Créer et configurer le bot sur Discord
 
@@ -127,7 +126,7 @@ Le bot quitte automatiquement le vocal après 10 minutes sans rien en lecture (p
 
 - `/balance` — affiche ton solde de coins sur le serveur actuel
 
-Les membres gagnent **5 coins par heure de vocal**, au prorata du temps réellement passé, et **0,5 coin par message**. Les messages des bots, les commandes adressées au bot, les doublons identiques dans les 30 secondes et le sixième message (ou suivant) envoyé dans une fenêtre de 10 secondes ne rapportent rien. Les soldes sont persistants dans Supabase et séparés serveur par serveur.
+Les membres gagnent **5 coins par heure de vocal**, au prorata du temps réellement passé, et **0,5 coin par message**. Le temps de vocal actif est inclus immédiatement dans `/balance`, puis enregistré comme transaction à la déconnexion. Les messages des bots, les commandes adressées au bot, les doublons identiques dans les 30 secondes et le sixième message (ou suivant) envoyé dans une fenêtre de 10 secondes ne rapportent rien. Les soldes sont persistants dans Supabase et séparés serveur par serveur.
 
 ### Statistiques
 
@@ -157,8 +156,7 @@ ScoobyBot/
 ├── supabase_client.py         client Supabase (lecture/écriture) partagé par les cogs
 ├── cardkit.py                  rendu des cards stats (Pillow, 1280×708, layout Statbot) + emojis Twemoji
 ├── supabase/
-│   ├── schema.sql              schéma des statistiques à exécuter une fois sur Supabase
-│   └── economy.sql             migration persistante du système de coins
+│   └── economy.sql             table des soldes + dictionnaire JSONB des transactions
 ├── cogs/
 │   ├── moderation.py           kick, ban, mute, warn, purge, slowmode
 │   ├── roles.py                menu de rôles par bouton

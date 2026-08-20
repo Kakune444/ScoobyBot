@@ -38,7 +38,7 @@ Quand un rôle automatique est configuré, il est attribué dès qu'un membre re
 | Commande | Description |
 |---|---|
 | `/join [channel]` | Fait rejoindre le bot à un salon vocal (le tien par défaut, ou celui précisé). |
-| `/play <recherche>` | Joue ou ajoute à la file un morceau (recherche ou lien YouTube). |
+| `/play <recherche>` | Joue ou ajoute à la file un morceau (recherche ou lien YouTube), avec cookies YouTube optionnels pour les blocages anti-bot. |
 | `/queue` | Affiche la file d'attente. |
 | `/skip` | Passe au morceau suivant. |
 | `/pause` | Met la lecture en pause. |

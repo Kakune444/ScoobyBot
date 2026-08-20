@@ -33,6 +33,25 @@ Crée ton fichier de config :
 ```bash
 cp .env.example .env
 ```
+
+### Railway et blocage YouTube
+
+Sur Railway, YouTube peut bloquer les requêtes de `yt-dlp` avec le message « Sign in to confirm you're not a bot ». Le projet installe le moteur JavaScript requis par `yt-dlp` et accepte un export de cookies YouTube via la variable secrète `YOUTUBE_COOKIES_B64`.
+
+Pour la configurer :
+
+1. Ouvre une fenêtre privée, connecte-toi à YouTube, puis visite `https://www.youtube.com/robots.txt` dans cette même fenêtre.
+2. Exporte uniquement les cookies de `youtube.com` avec une extension fiable au format Netscape, puis ferme la fenêtre privée sans rouvrir cet onglet.
+3. Encode le fichier `cookies.txt` en base64 et colle le résultat dans la variable Railway `YOUTUBE_COOKIES_B64`, puis redéploie le service.
+
+Sous PowerShell, l'encodage se fait ainsi (la valeur doit rester secrète) :
+
+```powershell
+$bytes = [IO.File]::ReadAllBytes(".\cookies.txt")
+[Convert]::ToBase64String($bytes)
+```
+
+Ne commite jamais `cookies.txt` ni sa valeur base64. Utilise de préférence un compte YouTube dédié : `yt-dlp` avertit que l'utilisation de cookies peut entraîner une limitation ou un bannissement du compte. En local, tu peux aussi définir `YOUTUBE_COOKIES_FILE` vers le chemin du fichier. Si le blocage persiste, définis également `YOUTUBE_USER_AGENT` avec le User-Agent complet du navigateur ayant servi à exporter les cookies.
 Puis édite `.env` avec ton token Discord et tes identifiants Supabase (voir section suivante).
 
 ### Configurer Supabase
@@ -94,7 +113,7 @@ Format de chaque rôle : `@mention | emoji | label`, séparés par `;`. Ça gén
 ### Musique
 
 - `/join [channel]` — rejoint ton salon vocal, ou celui précisé
-- `/play <recherche ou lien>` — cherche sur YouTube et joue (ou ajoute à la file si déjà en lecture)
+- `/play <recherche ou lien>` — cherche sur YouTube et joue (ou ajoute à la file si déjà en lecture) ; accepte `YOUTUBE_COOKIES_B64` sur Railway en cas de blocage anti-bot
 - `/queue` — affiche la file d'attente
 - `/skip` — passe au morceau suivant
 - `/pause` / `/resume` — pause / reprise
@@ -159,7 +178,7 @@ Les stats vivent dans Supabase (Postgres durable) : elles survivent aux redéplo
 
 **Risque résiduel** : `warnings.json`, `role_menus.json` et `autorole.json` restent stockés en fichiers locaux dans `data/`. Sur un hébergeur à conteneur éphémère (Railway sans volume persistant, par exemple), ils seraient perdus à chaque redéploiement — à garder en tête si tu veux les rendre aussi durables que les stats.
 
-La lecture audio passe par yt-dlp et FFmpeg. Si YouTube change son format d'API, il faudra faire un `pip install -U yt-dlp` régulièrement pour que ça continue de fonctionner.
+La lecture audio passe par yt-dlp et FFmpeg. Si YouTube change son format d'API, il faudra mettre à jour `yt-dlp[default]` régulièrement pour que ça continue de fonctionner.
 
 Pour un usage 24/7, héberge sur un VPS, Railway, Render, ou un Raspberry Pi qui tourne en continu.
 

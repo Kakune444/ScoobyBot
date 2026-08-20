@@ -1,5 +1,7 @@
 # Environnement
 .env
+cookies.txt
+*.cookies.txt
 venv/
 .venv/
 

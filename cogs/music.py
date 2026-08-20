@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import os
+import tempfile
 
 import discord
 import yt_dlp
@@ -15,6 +18,42 @@ YTDL_OPTIONS = {
     "nocheckcertificate": True,
     "ignoreerrors": False,
 }
+
+
+def _configure_youtube_auth():
+    """Configure an optional YouTube cookie file without storing it in the repo."""
+    cookie_file = os.getenv("YOUTUBE_COOKIES_FILE")
+    encoded_cookies = os.getenv("YOUTUBE_COOKIES_B64")
+
+    if encoded_cookies:
+        try:
+            cookie_data = base64.b64decode("".join(encoded_cookies.split()), validate=True)
+            if not cookie_data.startswith((b"# Netscape HTTP Cookie File", b"# HTTP Cookie File")):
+                raise ValueError("le fichier n'est pas au format Netscape attendu")
+
+            temporary_cookie_file = tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix="scoobybot-youtube-",
+                suffix=".txt",
+                delete=False,
+            )
+            with temporary_cookie_file:
+                temporary_cookie_file.write(cookie_data)
+            os.chmod(temporary_cookie_file.name, 0o600)
+            cookie_file = temporary_cookie_file.name
+        except (ValueError, OSError) as error:
+            print(f"Configuration YouTube invalide : {error}")
+            return
+
+    if cookie_file:
+        YTDL_OPTIONS["cookiefile"] = cookie_file
+
+    user_agent = os.getenv("YOUTUBE_USER_AGENT")
+    if user_agent:
+        YTDL_OPTIONS["http_headers"] = {"User-Agent": user_agent}
+
+
+_configure_youtube_auth()
 
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",

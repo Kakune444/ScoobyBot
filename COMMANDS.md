@@ -47,6 +47,14 @@ Quand un rôle automatique est configuré, il est attribué dès qu'un membre re
 
 Le bot quitte automatiquement le salon vocal après **10 minutes d'inactivité** (rien en lecture, y compris en pause) — que le salon soit vide ou non. Le minuteur se réinitialise à chaque nouvelle lecture et se coupe dès qu'on reprend la lecture (`/resume`).
 
+## Économie (`cogs/economy.py`)
+
+Les gains sont séparés par serveur et persistants dans Supabase : **5 coins par heure de vocal**, au prorata du temps passé, et **0,5 coin par message valide**. Les bots, commandes adressées au bot, doublons identiques dans les 30 secondes et messages dépassant le seuil anti-spam (plus de 5 messages en 10 secondes) ne rapportent rien.
+
+| Commande | Description |
+|---|---|
+| `/balance` | Affiche le solde de coins de l'utilisateur sur le serveur actuel. |
+
 ## Statistiques (`cogs/stats.py` + `cogs/statcommands.py` + `cardkit.py`)
 
 Le suivi (messages, sessions vocales, réactions, invitations, boosts, commandes utilisées) se fait automatiquement en arrière-plan et s'écrit événement par événement dans Supabase — aucune commande à lancer pour ça, et aucun recalcul depuis l'historique Discord au moment de consulter les stats (`cogs/stats.py` capture les événements, `cogs/statcommands.py` ne fait que lire et compose une image via `cardkit.py`).

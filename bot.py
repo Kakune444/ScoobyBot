@@ -43,6 +43,7 @@ INITIAL_EXTENSIONS = (
     "cogs.moderation",
     "cogs.roles",
     "cogs.music",
+    "cogs.economy",
     "cogs.stats",
     "cogs.statcommands",
     "cogs.blabla",

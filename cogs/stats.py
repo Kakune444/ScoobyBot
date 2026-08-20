@@ -166,10 +166,6 @@ class Stats(commands.Cog):
             return
 
         now = discord.utils.utcnow()
-        if before.channel is not None:
-            fire_and_forget(close_voice_session(
-                guild_id=member.guild.id, user_id=member.id, channel_id=before.channel.id, left_at=now,
-            ))
         if after.channel is not None:
             fire_and_forget(open_voice_session(
                 guild_id=member.guild.id, user_id=member.id, channel_id=after.channel.id, joined_at=now,

@@ -84,17 +84,47 @@ async def open_voice_session(*, guild_id, user_id, channel_id, joined_at):
     }).execute()
 
 
-async def close_voice_session(*, guild_id, user_id, channel_id, left_at):
+async def close_voice_session(*, guild_id, user_id, channel_id, left_at, coins_per_hour=5):
     client = await get_client()
-    await (
-        client.table("voice_sessions")
-        .update({"left_at": left_at.isoformat()})
+    await client.rpc("close_voice_session_and_award", {
+        "p_guild_id": guild_id,
+        "p_user_id": user_id,
+        "p_channel_id": channel_id,
+        "p_left_at": left_at.isoformat(),
+        "p_coins_per_hour": coins_per_hour,
+    }).execute()
+
+
+# ---------------------------------------------------------------------------
+# économie / coins
+# ---------------------------------------------------------------------------
+
+async def award_coins(*, guild_id, user_id, amount, reason, source_id):
+    """Crédite une opération une seule fois grâce à sa source idempotente."""
+    client = await get_client()
+    result = await client.rpc("award_coins", {
+        "p_guild_id": guild_id,
+        "p_user_id": user_id,
+        "p_amount": amount,
+        "p_reason": reason,
+        "p_source_id": str(source_id),
+    }).execute()
+    return float(result.data) if result.data is not None else None
+
+
+async def get_coin_balance(*, guild_id, user_id) -> float:
+    client = await get_client()
+    result = (
+        await client.table("members")
+        .select("coins")
         .eq("guild_id", guild_id)
         .eq("user_id", user_id)
-        .eq("channel_id", channel_id)
-        .is_("left_at", "null")
+        .limit(1)
         .execute()
     )
+    if not result.data:
+        return 0.0
+    return float(result.data[0].get("coins") or 0)
 
 
 async def insert_completed_voice_session(*, guild_id, user_id, channel_id, joined_at, left_at):

@@ -37,7 +37,7 @@ cp .env.example .env
 
 ### Railway et blocage YouTube
 
-Sur Railway, YouTube peut bloquer les requêtes de `yt-dlp` avec le message « Sign in to confirm you're not a bot ». Le projet installe le moteur JavaScript requis par `yt-dlp` et accepte un export de cookies YouTube via la variable secrète `YOUTUBE_COOKIES_B64`.
+Sur Railway, YouTube peut bloquer les requêtes de `yt-dlp` avec le message « Sign in to confirm you're not a bot ». Le projet épingle `yt-dlp 2026.8.19`, installe son extra EJS, Deno 2.9.5 et le plugin `bgutil-ytdlp-pot-provider 1.3.1`. Les cookies sont acceptés via `YOUTUBE_COOKIES_B64` ou un fichier `cookies.txt` non versionné.
 
 Pour la configurer :
 
@@ -52,7 +52,11 @@ $bytes = [IO.File]::ReadAllBytes(".\cookies.txt")
 [Convert]::ToBase64String($bytes)
 ```
 
-Ne commite jamais `cookies.txt` ni sa valeur base64. Utilise de préférence un compte YouTube dédié : `yt-dlp` avertit que l'utilisation de cookies peut entraîner une limitation ou un bannissement du compte. En local, tu peux aussi définir `YOUTUBE_COOKIES_FILE` vers le chemin du fichier. Si le blocage persiste, définis également `YOUTUBE_USER_AGENT` avec le User-Agent complet du navigateur ayant servi à exporter les cookies.
+Ne commite jamais `cookies.txt` ni sa valeur base64. Utilise de préférence un compte YouTube dédié : `yt-dlp` avertit que l'utilisation de cookies peut entraîner une limitation ou un bannissement du compte. En local, tu peux aussi définir `YOUTUBE_COOKIES_FILE` vers le chemin du fichier ; sans variable, le bot cherche `cookies.txt` à la racine du projet. Au démarrage, il affiche uniquement l'existence, la taille et l'état du format Netscape, jamais les valeurs.
+
+Pour le PO Token Provider recommandé, crée un second service Railway dans le même projet/environnement à partir de l'image Docker `brainicism/bgutil-ytdlp-pot-provider:1.3.1-deno`. Laisse ce service écouter sur son port interne `4416`, puis ajoute au service du bot la variable `YOUTUBE_POT_BASE_URL` avec une référence privée du type `http://${{bgutil-pot.RAILWAY_PRIVATE_DOMAIN}}:4416` (en adaptant `bgutil-pot` au nom du service). Le bot utilise alors `youtubepot-bgutilhttp:base_url=...`; aucune URL publique ni secret n'est nécessaire. Le provider HTTP est préférable au mode script pour un bot 24/7 car il évite de lancer Deno à chaque requête.
+
+La commande `/ytdlpdiagnostic` (Administrateur) teste par défaut `https://www.youtube.com/watch?v=msa8KUwXbz0` sans télécharger le média complet et distingue cookies absents/invalides, provider PO Token indisponible, runtime/EJS, problème réseau Railway et refus YouTube. Elle ne renvoie jamais les logs verbose bruts, les headers ou les secrets.
 Puis édite `.env` avec ton token Discord et tes identifiants Supabase (voir section suivante).
 
 ### Configurer Supabase
@@ -114,7 +118,8 @@ Format de chaque rôle : `@mention | emoji | label`, séparés par `;`. Ça gén
 ### Musique
 
 - `/join [channel]` — rejoint ton salon vocal, ou celui précisé
-- `/play <recherche ou lien>` — cherche sur YouTube et joue (ou ajoute à la file si déjà en lecture) ; accepte `YOUTUBE_COOKIES_B64` sur Railway en cas de blocage anti-bot
+- `/play <recherche ou lien>` — cherche sur YouTube et joue (ou ajoute à la file si déjà en lecture) ; utilise les cookies et le PO Token Provider configurés sur Railway
+- `/ytdlpdiagnostic [url]` — (Administrateur) vérifie yt-dlp/YouTube sans téléchargement complet
 - `/queue` — affiche la file d'attente
 - `/skip` — passe au morceau suivant
 - `/pause` / `/resume` — pause / reprise
@@ -167,6 +172,8 @@ ScoobyBot/
 │   ├── statcommands.py         /serverstat /userstat /channelstat — lecture Supabase + composition de la card (cardkit.py)
 │   ├── blabla.py                réponse automatique aux pavés de texte
 │   └── scooby_quotes.py        répliques de Scooby-Doo affichées après chaque action
+├── tests/
+│   └── test_youtube_diagnostics.py validation locale des cookies et de l'URL de diagnostic
 ├── data/
 │   ├── warnings.json            avertissements par serveur/membre
 │   ├── role_menus.json          menus de rôles persistants

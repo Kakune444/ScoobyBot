@@ -39,6 +39,7 @@ Quand un rôle automatique est configuré, il est attribué dès qu'un membre re
 |---|---|
 | `/join [channel]` | Fait rejoindre le bot à un salon vocal (le tien par défaut, ou celui précisé). |
 | `/play <recherche>` | Joue ou ajoute à la file un morceau (recherche ou lien YouTube), avec cookies YouTube optionnels pour les blocages anti-bot. |
+| `/ytdlpdiagnostic [url]` | (Administrateur) Teste yt-dlp, les cookies, Deno/FFmpeg et le PO Token Provider sans télécharger la vidéo. |
 | `/queue` | Affiche la file d'attente. |
 | `/skip` | Passe au morceau suivant. |
 | `/pause` | Met la lecture en pause. |

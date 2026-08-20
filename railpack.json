@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.railpack.com",
   "packages": {
-    "deno": "latest"
+    "deno": "2.9.5"
   },
   "deploy": {
     "aptPackages": ["...", "ffmpeg"]

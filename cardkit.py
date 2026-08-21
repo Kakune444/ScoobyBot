@@ -594,7 +594,7 @@ def render_slots_card(
     total_pay = panel_w - 2 * cell_pad
     item_w = total_pay / len(pay_rows)
     label_emoji_size = _s(36)
-    is_emoji_label = lambda label: label in ("💎", "7️⃣")
+    is_emoji_label = lambda label: label in ("💎   ", "7️⃣   ")
     for i, (label, mult) in enumerate(pay_rows):
         cx = panel_x + cell_pad + item_w * (i + 0.5)
         if is_emoji_label(label):

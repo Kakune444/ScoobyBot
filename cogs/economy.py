@@ -492,11 +492,12 @@ def _roulette_bet_view(user_id: int, amount: int) -> discord.ui.View:
 class _RouletteModal(discord.ui.Modal):
     """Modal : numéro (Plein) ou douzaine/colonne. La mise vient de /roulette."""
 
-    def __init__(self, bet_type: str, user_id: int, amount: int):
+    def __init__(self, bet_type: str, user_id: int, amount: int, message: discord.Message):
         super().__init__(title=f"{ROULETTE_TYPES[bet_type]} — {_format_coins(amount)} coins ({ROULETTE_ODDS[bet_type]})")
         self.bet_type = bet_type
         self.user_id = user_id
         self.amount = amount
+        self.message = message
         if bet_type == "plein":
             self.number_input = discord.ui.TextInput(
                 label="Numéro (0-36)", min_length=1, max_length=2, placeholder="0 à 36",
@@ -608,17 +609,29 @@ class _RouletteModal(discord.ui.Modal):
 
         # State 2 : bille lancée (3 frames)
         for frame in range(3):
-            await interaction.edit_original_response(
-                content=None, attachments=[_render("spin", frame)], view=None,
-            )
+            try:
+                await self.message.edit(
+                    content=None, attachments=[_render("spin", frame)], view=None,
+                )
+            except discord.NotFound:
+                return
+            except discord.HTTPException as error:
+                print(f"Erreur Discord (animation roulette) : {error}")
+                return
             await asyncio.sleep(0.45)
 
         # State 3 : atterrissage + gains (3 frames)
         for frame in range(3):
-            await interaction.edit_original_response(
-                content=None, attachments=[_render("land", frame)],
-                view=None if frame < 2 else _roulette_bet_view(user_id, amount),
-            )
+            try:
+                await self.message.edit(
+                    content=None, attachments=[_render("land", frame)],
+                    view=None if frame < 2 else _roulette_bet_view(user_id, amount),
+                )
+            except discord.NotFound:
+                return
+            except discord.HTTPException as error:
+                print(f"Erreur Discord (animation roulette) : {error}")
+                return
             await asyncio.sleep(0.55)
 
 

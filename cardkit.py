@@ -739,21 +739,32 @@ def render_roulette_card(
         draw.text((_s(legend_x + 20), _s(row_y)), name, font=_font("regular", 18), fill=INK_SOFT, anchor="lm")
         draw.text((_s(legend_x + legend_w - 20), _s(row_y)), ratio, font=_font("bold", 18), fill=INK, anchor="rm")
 
-    bet_x, bet_y, bet_w, bet_h = 112, 400, 330, 190
+    bet_x, bet_y, bet_w, bet_h = 112, 400, 330, 210
     draw.rounded_rectangle(
         (_s(bet_x), _s(bet_y), _s(bet_x + bet_w), _s(bet_y + bet_h)),
         radius=_s(16), fill=ROW_DARK,
     )
-    draw.text((_s(bet_x + 20), _s(bet_y + 26)), "MISE", font=_font("bold", 18), fill=INK_MUTED, anchor="lm")
-    draw.text((_s(bet_x + 20), _s(bet_y + 70)), bet_label or "—", font=_font("bold", 20), fill=INK, anchor="lm")
+    draw.text((_s(bet_x + 20), _s(bet_y + 24)), "MISE", font=_font("bold", 18), fill=INK_MUTED, anchor="lm")
+    # Label de mise tronqué s'il déborde
+    label_font_b = _font("bold", 20)
+    label_text = bet_label or "—"
+    max_label_w = bet_w - 40
+    while label_text and draw.textlength(label_text, font=label_font_b) > _s(max_label_w):
+        label_text = label_text[:-1]
+    draw.text((_s(bet_x + 20), _s(bet_y + 62)), label_text + ("…" if label_text != (bet_label or "—") else ""), font=label_font_b, fill=INK, anchor="lm")
     if bet > 0:
         draw.text(
-            (_s(bet_x + 20), _s(bet_y + 112)),
+            (_s(bet_x + 20), _s(bet_y + 108)),
             f"{_format_card_coins(bet)} coins",
-            font=_font("bold", 30), fill=SERIES_MESSAGES, anchor="lm",
+            font=_font("bold", 32), fill=SERIES_MESSAGES, anchor="lm",
         )
-    if payout is not None and state == "land":
-        draw.text((_s(bet_x + 20), _s(bet_y + 152)), f"Gain : +{_format_card_coins(payout)}", font=_font("bold", 20), fill=(226, 82, 96, 255), anchor="lm")
+    if state == "land" and payout is not None:
+        gain_color = (226, 82, 96, 255) if (net or 0) > 0 else INK_SOFT
+        draw.text(
+            (_s(bet_x + 20), _s(bet_y + 160)),
+            f"Retour : +{_format_card_coins(payout)}",
+            font=_font("bold", 20), fill=gain_color, anchor="lm",
+        )
 
     # --- Roue stylisée, déplacée à droite et agrandie (centre balancé)
     cx, cy = 823, 330

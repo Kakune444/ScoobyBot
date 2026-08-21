@@ -584,9 +584,9 @@ def render_slots_card(
     )
     pay_rows = [
         ("PAIRE", 1.6),
-        ("3×IDEM", 4),
-        ("💎", 10),
-        ("7️⃣", 30),
+        ("TRIPLE", 4),
+        ("💎   ", 10),
+        ("7️⃣   ", 30),
     ]
     cell_pad = _s(28)
     symbol_font = _font("bold", 30)

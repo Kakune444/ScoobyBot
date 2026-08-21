@@ -271,6 +271,38 @@ class Economy(commands.Cog):
                 print(f"Erreur Discord (animation slots) : {error}")
                 break
 
+    @app_commands.command(name="eco", description="Aide sur l'économie du serveur")
+    @app_commands.guild_only()
+    async def eco(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="📊 Économie — ScoobyBot",
+            description="Comment gagner des coins et les dépenser.",
+            color=discord.Color.gold(),
+        )
+        embed.add_field(
+            name="🎁 Gains",
+            value=(
+                "`💬 Message` — **0,5 coin** par message valide (anti-spam).\n"
+                "`🎤 Vocal` — **5 coins/heure** au prorata du temps passé."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="💰 Soldes",
+            value="`/balance` — affiche ton solde de coins sur ce serveur.",
+            inline=False,
+        )
+        embed.add_field(
+            name="🎰 Machine à sous",
+            value=(
+                "`/slots [mise]` — mises : 1, 5, 10 ou 100 coins.\n"
+                "• Paire ×1,6 · triple ×4 · 💎×10 · 7️⃣×30"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Propulsé par ScoobyBot")
+        await interaction.response.send_message(embed=embed)
+
     @app_commands.command(name="balance", description="Afficher ton solde de coins")
     @app_commands.guild_only()
     async def balance(self, interaction: discord.Interaction):

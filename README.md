@@ -129,6 +129,7 @@ Le bot quitte automatiquement le vocal après 10 minutes sans rien en lecture (p
 
 ### Économie
 
+- `/eco` — aide sur l'économie (gains + commandes)
 - `/balance` — affiche ton solde de coins sur le serveur actuel
 - `/slots <mise>` — joue à la machine à sous avec une mise fixe de 1, 5, 10 ou 100 coins
 
@@ -161,6 +162,7 @@ ScoobyBot/
 ├── bot.py                     point d'entrée, charge les cogs, sync des slash commands
 ├── supabase_client.py         client Supabase (lecture/écriture) partagé par les cogs
 ├── cardkit.py                  rendu des cards stats (Pillow, 1280×708, layout Statbot) + emojis Twemoji
+├── DESIGN.md                  spécification technique des nouvelles fonctionnalités économie (pay, prêts)
 ├── supabase/
 │   └── economy.sql             soldes, transactions JSONB + journal des parties slots
 ├── cogs/

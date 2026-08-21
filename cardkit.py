@@ -682,19 +682,34 @@ def _roulette_number_position(cx: float, cy: float, radius: float, angle_deg: fl
     return cx + radius * math.cos(rad), cy + radius * math.sin(rad)
 
 
+_ROULETTE_PAYTABLE = (
+    ("Plein", "35:1"),
+    ("Rouge / Noir", "1:1"),
+    ("Pair / Impair", "1:1"),
+    ("Manque / Passe", "1:1"),
+    ("Douzaine", "2:1"),
+    ("Colonne", "2:1"),
+)
+
+
 def render_roulette_card(
     *,
-    result_num: int,
-    color_label: str,
+    state: str,
+    frame: int = 0,
+    result_num: int | None = None,
+    color_label: str | None = None,
     balance: float,
-    bet: int,
-    bet_label: str,
-    status: str,
+    bet: int = 0,
+    bet_label: str = "",
     emoji_map: dict,
     payout: float | None = None,
     net: float | None = None,
 ) -> Image.Image:
-    """Card roulette européenne — roue stylisée + mise + résultat, style stats/slots."""
+    """Card roulette européenne.
+
+    state : "bet" (attente de mise), "spin" (bille lancée), "land" (3 frames
+    d'atterrissage + gains). Les cotes sont superposées à gauche, la mise à
+    droite ; la bille orbite pendant spin puis se pose sur la case gagnante."""
     import math
     canvas = Image.new("RGBA", (_s(CARD_W), _s(CARD_H)), PAGE_BG)
     draw = ImageDraw.Draw(canvas)
@@ -706,63 +721,94 @@ def render_roulette_card(
         font=_font("bold", 25), fill=INK_SOFT, anchor="rm",
     )
 
-    panel_x, panel_y, panel_w, panel_h = 76, 116, 1128, 444
+    panel_x, panel_y, panel_w, panel_h = 76, 108, 1128, 448
     draw.rounded_rectangle(
         (_s(panel_x), _s(panel_y), _s(panel_x + panel_w), _s(panel_y + panel_h)),
         radius=_s(24), fill=BLOCK_BG,
     )
-    draw.text((_s(112), _s(151)), "ROULEETTE EUROPÉENNE", font=_font("bold", 22), fill=INK_MUTED, anchor="lm")
-    draw.text(
-        (_s(1168), _s(151)),
-        f"Mise : {_format_card_coins(bet)} coins — {bet_label}",
-        font=_font("bold", 22), fill=INK_SOFT, anchor="rm",
-    )
 
-    # Roue stylisée : ring de 37 secteurs colorés + numéros
-    cx, cy = 640, 350
-    r_out, r_in = 185, 128
+    # --- Colonne de gauche : table des cotes (superposée sur l'image)
+    legend_x, legend_y, legend_w, legend_h = 112, 150, 300, 260
+    draw.rounded_rectangle(
+        (_s(legend_x), _s(legend_y), _s(legend_x + legend_w), _s(legend_y + legend_h)),
+        radius=_s(16), fill=ROW_DARK,
+    )
+    draw.text((_s(legend_x + 20), _s(legend_y + 24)), "PAIEMENTS", font=_font("bold", 18), fill=INK_MUTED, anchor="lm")
+    for i, (name, ratio) in enumerate(_ROULETTE_PAYTABLE):
+        row_y = legend_y + 58 + i * 33
+        draw.text((_s(legend_x + 20), _s(row_y)), name, font=_font("regular", 18), fill=INK_SOFT, anchor="lm")
+        draw.text((_s(legend_x + legend_w - 20), _s(row_y)), ratio, font=_font("bold", 18), fill=INK, anchor="rm")
+
+    # --- Colonne de droite : mise en cours
+    bet_x, bet_y, bet_w, bet_h = 868, 150, 300, 200
+    draw.rounded_rectangle(
+        (_s(bet_x), _s(bet_y), _s(bet_x + bet_w), _s(bet_y + bet_h)),
+        radius=_s(16), fill=ROW_DARK,
+    )
+    draw.text((_s(bet_x + 20), _s(bet_y + 24)), "MISE", font=_font("bold", 18), fill=INK_MUTED, anchor="lm")
+    draw.text((_s(bet_x + 20), _s(bet_y + 66)), bet_label or "—", font=_font("bold", 20), fill=INK, anchor="lm")
+    if bet > 0:
+        draw.text(
+            (_s(bet_x + 20), _s(bet_y + 104)),
+            f"{_format_card_coins(bet)} coins",
+            font=_font("bold", 26), fill=SERIES_MESSAGES, anchor="lm",
+        )
+    if payout is not None and state == "land":
+        draw.text((_s(bet_x + 20), _s(bet_y + 156)), f"Gain : +{_format_card_coins(payout)}", font=_font("bold", 20), fill=(226, 82, 96, 255), anchor="lm")
+
+    # --- Roue stylisée : ring de 37 secteurs colorés + numéros
+    cx, cy = 640, 320
+    r_out, r_in = 170, 116
     n = len(_ROULETTE_ORDER)
-    num_font = _font("bold", 18)
+    num_font = _font("bold", 16)
     for i, number in enumerate(_ROULETTE_ORDER):
         a0 = i * 360 / n
         a1 = (i + 1) * 360 / n
         fill = _roulette_color(number)
-        outline = (255, 255, 255, 255) if number == result_num else (0, 0, 0, 0)
+        highlighted = state == "land" and number == result_num
+        outline = (255, 255, 255, 255) if highlighted else (0, 0, 0, 0)
+        width = _s(3) if highlighted else _s(1)
         draw.pieslice(
             (_s(cx - r_out), _s(cy - r_out), _s(cx + r_out), _s(cy + r_out)),
-            a0, a1, fill=fill, outline=outline, width=_s(2),
+            a0, a1, fill=fill, outline=outline, width=width,
         )
         mid = (a0 + a1) / 2
         px, py = _roulette_number_position(cx, cy, (r_in + r_out) / 2, mid)
         draw.text((_s(px), _s(py)), str(number), font=num_font, fill=INK, anchor="mm")
 
-    # Moyeu avec le résultat
-    hub_r = 120
+    # Moyeu
+    hub_r = 108
     draw.ellipse((_s(cx - hub_r), _s(cy - hub_r), _s(cx + hub_r), _s(cy + hub_r)), fill=ROW_DARK, outline=BADGE_LABEL_BG, width=_s(2))
-    result_fill = _roulette_color(result_num)
-    draw.ellipse((_s(cx - 46), _s(cy - 46), _s(cx + 46), _s(cy + 46)), fill=result_fill, outline=(255, 255, 255, 255), width=_s(3))
-    draw.text((_s(cx), _s(cy - 20)), str(result_num), font=_font("bold", 40), fill=INK, anchor="mm")
-    draw.text((_s(cx), _s(cy + 26)), color_label.upper(), font=_font("bold", 18), fill=INK, anchor="mm")
 
-    # Status / gain-perte
-    status_fill = INK_SOFT
-    if net is not None:
-        status_fill = SERIES_MESSAGES if net > 0 else (226, 82, 96, 255)
-    status_font = _font("bold", 29)
-    status_emoji_size = _s(31)
-    status_width = _rich_width(draw, status, status_font, emoji_map, status_emoji_size)
-    draw_rich_text(
-        canvas, draw,
-        _s(CARD_W / 2) - status_width / 2, _s(604),
-        status, status_font, status_fill, emoji_map, status_emoji_size,
-    )
-
-    if payout is not None:
-        draw.text(
-            (_s(CARD_W / 2), _s(646)),
-            f"Retour brut : {_format_card_coins(payout)} coins  •  Nouveau solde : {_format_card_coins(balance)} coins",
-            font=_font("regular", 21), fill=INK_MUTED, anchor="mm",
+    if state == "land" and result_num is not None:
+        result_fill = _roulette_color(result_num)
+        draw.ellipse((_s(cx - 44), _s(cy - 44), _s(cx + 44), _s(cy + 44)), fill=result_fill, outline=(255, 255, 255, 255), width=_s(3))
+        draw.text((_s(cx), _s(cy - 18)), str(result_num), font=_font("bold", 38), fill=INK, anchor="mm")
+        draw.text((_s(cx), _s(cy + 24)), (color_label or "").upper(), font=_font("bold", 17), fill=INK, anchor="mm")
+    else:
+        # Bille qui orbite pendant "spin", ou point d'attente en "bet"
+        ball_angle = frame * 24 if state == "spin" else -90
+        ball_r = r_in + 10
+        bx, by = _roulette_number_position(cx, cy, ball_r, ball_angle)
+        draw.ellipse(
+            (_s(bx - 9), _s(by - 9), _s(bx + 9), _s(by + 9)),
+            fill=(240, 240, 240, 255), outline=(0, 0, 0, 120),
         )
+        label = "🎡 La roulette tourne…" if state == "spin" else "Choisis une mise"
+        label_font = _font("bold", 26)
+        label_w = draw.textlength(label, font=label_font)
+        draw.text((_s(cx) - label_w / 2, _s(cy)), label, font=label_font, fill=INK_SOFT, anchor="mm")
+
+    # --- Ligne de statut (bas du panneau)
+    if state == "land":
+        status_fill = SERIES_MESSAGES if net is not None and net >= 0 else (226, 82, 96, 255)
+        status_text = (
+            f"✅ +{_format_card_coins(net)} coins" if net is not None and net > 0
+            else (f"❌ {_format_card_coins(net)} coins" if net is not None else "")
+        )
+        status_font = _font("bold", 34)
+        status_w = draw.textlength(status_text, font=status_font)
+        draw.text((_s(CARD_W / 2) - status_w / 2, _s(panel_y + panel_h - 36)), status_text, font=status_font, fill=status_fill, anchor="mm")
 
     brand_font = _font("bold", 21)
     brand_text = "Propulsé par ScoobyBot"

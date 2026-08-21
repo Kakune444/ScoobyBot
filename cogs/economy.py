@@ -74,7 +74,7 @@ ROULETTE_ODDS = {
 }
 ROULETTE_RED_NUMBERS = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
 ROULETTE_MIN_BET = 1
-ROULETTE_MAX_BET = 100000
+ROULETTE_MAX_BET = 1000000
 
 
 def _roulette_color(number: int) -> str:
@@ -384,8 +384,16 @@ class Economy(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="roulette", description="Jouer à la roulette européenne")
+    @app_commands.describe(mise="Le montant de la mise (1 à 1 000 000 coins)")
     @app_commands.guild_only()
-    async def roulette(self, interaction: discord.Interaction):
+    async def roulette(self, interaction: discord.Interaction, mise: int):
+        if mise < ROULETTE_MIN_BET or mise > ROULETTE_MAX_BET:
+            await interaction.response.send_message(
+                f"Mise entre **{ROULETTE_MIN_BET}** et **{ROULETTE_MAX_BET}** coins.",
+                ephemeral=True,
+            )
+            return
+
         try:
             balance = await get_coin_balance(
                 guild_id=interaction.guild.id,
@@ -399,6 +407,14 @@ class Economy(commands.Cog):
             )
             return
 
+        if mise > balance:
+            await interaction.response.send_message(
+                f"Solde insuffisant : il te faut **{_format_coins(mise)} coins** "
+                f"et tu en as **{_format_coins(balance)}**.",
+                ephemeral=True,
+            )
+            return
+
         try:
             emoji_map = await fetch_emoji_images(collect_emojis("🎡", "🔴", "⚫", "🟢"))
         except Exception as error:
@@ -408,11 +424,11 @@ class Economy(commands.Cog):
         image = render_roulette_card(
             state="bet",
             balance=balance,
-            bet=0,
-            bet_label="",
+            bet=mise,
+            bet_label="Choisis un type de mise",
             emoji_map=emoji_map,
         )
-        view = _roulette_bet_view(interaction.user.id)
+        view = _roulette_bet_view(interaction.user.id, mise)
         await interaction.response.send_message(
             file=to_discord_file(image, "roulette.png"),
             view=view,
@@ -437,16 +453,21 @@ class Economy(commands.Cog):
         custom_id = interaction.data.get("custom_id", "")
         if not custom_id.startswith("roulettebet:"):
             return
-        _, user_id, bet_type = custom_id.split(":")
+        parts = custom_id.split(":")
+        if len(parts) != 4:
+            return
+        _, user_id, bet_type, amount = parts
         if int(user_id) != interaction.user.id:
             await interaction.response.send_message(
                 "Cette roulette ne t'appartient pas.", ephemeral=True
             )
             return
-        await interaction.response.send_modal(_RouletteModal(bet_type, interaction.user.id))
+        await interaction.response.send_modal(
+            _RouletteModal(bet_type, interaction.user.id, int(amount))
+        )
 
 
-def _roulette_bet_view(user_id: int) -> discord.ui.View:
+def _roulette_bet_view(user_id: int, amount: int) -> discord.ui.View:
     """Boutons de mise persistants sous l'image (pattern roles.py)."""
     labels = {
         "rouge": "🔴 Rouge", "noir": "⚫ Noir", "pair": "Pair", "impair": "Impair",
@@ -457,29 +478,25 @@ def _roulette_bet_view(user_id: int) -> discord.ui.View:
         view.add_item(discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label=label,
-            custom_id=f"roulettebet:{user_id}:{bet_type}",
+            custom_id=f"roulettebet:{user_id}:{bet_type}:{amount}",
         ))
     for bet_type, label in (("douzaine", "Douzaine"), ("colonne", "Colonne")):
         view.add_item(discord.ui.Button(
             style=discord.ButtonStyle.primary,
             label=label,
-            custom_id=f"roulettebet:{user_id}:{bet_type}",
+            custom_id=f"roulettebet:{user_id}:{bet_type}:{amount}",
         ))
     return view
 
 
 class _RouletteModal(discord.ui.Modal):
-    """Modal : montant libre (+ numéro Plein, ou douzaine/colonne)."""
+    """Modal : précise le numéro (Plein) ou la douzaine/colonne."""
 
-    def __init__(self, bet_type: str, user_id: int):
-        super().__init__(title=f"Mise — {ROULETTE_TYPES[bet_type]} ({ROULETTE_ODDS[bet_type]})")
+    def __init__(self, bet_type: str, user_id: int, amount: int):
+        super().__init__(title=f"{ROULETTE_TYPES[bet_type]} — {_format_coins(amount)} coins ({ROULETTE_ODDS[bet_type]})")
         self.bet_type = bet_type
         self.user_id = user_id
-        self.amount_input = discord.ui.TextInput(
-            label="Montant (coins)", min_length=1, max_length=10,
-            placeholder=f"{ROULETTE_MIN_BET} – {ROULETTE_MAX_BET}",
-        )
-        self.add_item(self.amount_input)
+        self.amount = amount
         if bet_type == "plein":
             self.number_input = discord.ui.TextInput(
                 label="Numéro (0-36)", min_length=1, max_length=2, placeholder="0 à 36",
@@ -504,18 +521,7 @@ class _RouletteModal(discord.ui.Modal):
             )
             return
 
-        try:
-            amount = round(float(self.amount_input.value.replace(",", ".")), 2)
-        except ValueError:
-            await interaction.response.send_message("Montant invalide.", ephemeral=True)
-            return
-        if amount < ROULETTE_MIN_BET or amount > ROULETTE_MAX_BET:
-            await interaction.response.send_message(
-                f"Mise entre **{ROULETTE_MIN_BET}** et **{ROULETTE_MAX_BET}** coins.",
-                ephemeral=True,
-            )
-            return
-
+        amount = self.amount
         bet_type = self.bet_type
         if bet_type == "plein":
             try:
@@ -611,7 +617,7 @@ class _RouletteModal(discord.ui.Modal):
         for frame in range(3):
             await interaction.edit_original_response(
                 content=None, attachments=[_render("land", frame)],
-                view=None if frame < 2 else _roulette_bet_view(user_id),
+                view=None if frame < 2 else _roulette_bet_view(user_id, amount),
             )
             await asyncio.sleep(0.55)
 

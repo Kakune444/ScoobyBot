@@ -132,9 +132,9 @@ Le bot quitte automatiquement le vocal après 10 minutes sans rien en lecture (p
 - `/eco` — aide sur l'économie (gains + commandes)
 - `/balance` — affiche ton solde de coins sur le serveur actuel
 - `/slots <mise>` — joue à la machine à sous avec une mise fixe de 1, 5, 10 ou 100 coins
-- `/roulette` — roulette européenne (RTP 97,30 %), mise libre 1-100 000
+- `/roulette <mise>` — roulette européenne (RTP 97,30 %), mise 1-1 000 000
 
-Les membres gagnent **5 coins par heure de vocal**, au prorata du temps réellement passé, et **0,5 coin par message**. Le temps de vocal actif est inclus immédiatement dans `/balance`, puis enregistré comme transaction à la déconnexion. Les messages des bots, les commandes adressées au bot, les doublons identiques dans les 30 secondes et le sixième message (ou suivant) envoyé dans une fenêtre de 10 secondes ne rapportent rien. Les soldes sont persistants dans Supabase et séparés serveur par serveur. `/slots` utilise des rouleaux pondérés, une animation en card et un RTP théorique de **97,03 %** (paire ×1,6 ; triples ×4, 💎×10, 7️⃣×30) ; les parties sont enregistrées dans `slot_games`. `/roulette` est une vraie roulette européenne (un seul zéro, RTP **97,30 %**) : Plein 35:1, Rouge/Noir, Pair/Impair, Manque/Passe 1:1, Douzaine/Colonne 2:1, avec mise libre de 1 à 100 000 coins ; les parties sont enregistrées dans `roulette_games`.
+Les membres gagnent **5 coins par heure de vocal**, au prorata du temps réellement passé, et **0,5 coin par message**. Le temps de vocal actif est inclus immédiatement dans `/balance`, puis enregistré comme transaction à la déconnexion. Les messages des bots, les commandes adressées au bot, les doublons identiques dans les 30 secondes et le sixième message (ou suivant) envoyé dans une fenêtre de 10 secondes ne rapportent rien. Les soldes sont persistants dans Supabase et séparés serveur par serveur. `/slots` utilise des rouleaux pondérés, une animation en card et un RTP théorique de **97,03 %** (paire ×1,6 ; triples ×4, 💎×10, 7️⃣×30) ; les parties sont enregistrées dans `slot_games`. `/roulette` est une vraie roulette européenne (un seul zéro, RTP **97,30 %**) : Plein 35:1, Rouge/Noir, Pair/Impair, Manque/Passe 1:1, Douzaine/Colonne 2:1, avec mise de 1 à 1 000 000 coins ; les parties sont enregistrées dans `roulette_games`.
 
 ### Statistiques
 

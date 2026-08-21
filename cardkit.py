@@ -517,7 +517,7 @@ def render_slots_card(
         anchor="rm",
     )
 
-    panel_x, panel_y, panel_w, panel_h = 76, 116, 1128, 410
+    panel_x, panel_y, panel_w, panel_h = 76, 116, 1128, 444
     draw.rounded_rectangle(
         (_s(panel_x), _s(panel_y), _s(panel_x + panel_w), _s(panel_y + panel_h)),
         radius=_s(24),
@@ -538,27 +538,29 @@ def render_slots_card(
         anchor="rm",
     )
 
-    cell_w, cell_h, gap = 292, 238, 22
+    cell_w, cell_h, gap = 292, 270, 22
     total_w = 3 * cell_w + 2 * gap
     first_x = panel_x + (panel_w - total_w) / 2
-    reel_font = _font("bold", 82)
-    emoji_size = _s(94)
+    reel_top = 178
+    reel_font = _font("bold", 92)
+    emoji_size = _s(106)
     for index, symbol in enumerate(reels):
         x = first_x + index * (cell_w + gap)
         draw.rounded_rectangle(
-            (_s(x), _s(194), _s(x + cell_w), _s(194 + cell_h)),
+            (_s(x), _s(reel_top), _s(x + cell_w), _s(reel_top + cell_h)),
             radius=_s(18),
             fill=ROW_DARK,
             outline=BADGE_LABEL_BG,
             width=_s(2),
         )
+        center_y = reel_top + cell_h / 2
         width = _rich_width(draw, symbol, reel_font, emoji_map, emoji_size)
         if width:
             draw_rich_text(
                 canvas,
                 draw,
                 _s(x + cell_w / 2) - width / 2,
-                _s(313),
+                _s(center_y),
                 symbol,
                 reel_font,
                 INK,
@@ -567,12 +569,73 @@ def render_slots_card(
             )
         else:
             draw.text(
-                (_s(x + cell_w / 2), _s(313)),
+                (_s(x + cell_w / 2), _s(center_y)),
                 symbol,
                 font=reel_font,
                 fill=INK,
                 anchor="mm",
             )
+
+    # Table de paiement : lignes de gains des triples, comblent l'espace du bas
+    draw.line(
+        (_s(panel_x + 26), _s(494), _s(panel_x + panel_w - 26), _s(494)),
+        fill=BADGE_LABEL_BG,
+        width=_s(2),
+    )
+    pay_rows = [
+        ("PAIRE", 1.6),
+        ("🍒", 4),
+        ("🍋", 5),
+        ("🍇", 6),
+        ("🔔", 8),
+        ("💎", 10),
+        ("7️⃣", 12),
+    ]
+    cell_pad = _s(28)
+    symbol_font = _font("bold", 30)
+    label_font = _font("bold", 22)
+    total_pay = panel_w - 2 * cell_pad
+    item_w = total_pay / len(pay_rows)
+    label_emoji_size = _s(36)
+    for i, (label, mult) in enumerate(pay_rows):
+        cx = panel_x + cell_pad + item_w * (i + 0.5)
+        if label == "PAIRE":
+            draw.text(
+                (_s(cx), _s(511)),
+                f"PAIRE {mult:g}×",
+                font=label_font,
+                fill=INK_MUTED,
+                anchor="mm",
+            )
+            continue
+        label_width = _rich_width(draw, label, symbol_font, emoji_map, label_emoji_size)
+        if label_width:
+            draw_rich_text(
+                canvas,
+                draw,
+                _s(cx) - label_width / 2,
+                _s(520),
+                label,
+                symbol_font,
+                INK_SOFT,
+                emoji_map,
+                label_emoji_size,
+            )
+        else:
+            draw.text(
+                (_s(cx), _s(520)),
+                label,
+                font=symbol_font,
+                fill=INK_SOFT,
+                anchor="mm",
+            )
+        draw.text(
+            (_s(cx + 20), _s(520)),
+            f"{mult}×",
+            font=label_font,
+            fill=INK_MUTED,
+            anchor="mm",
+        )
 
     status_fill = INK_SOFT
     if net is not None:
@@ -584,7 +647,7 @@ def render_slots_card(
         canvas,
         draw,
         _s(CARD_W / 2) - status_width / 2,
-        _s(584),
+        _s(604),
         status,
         status_font,
         status_fill,
@@ -594,12 +657,23 @@ def render_slots_card(
 
     if payout is not None:
         draw.text(
-            (_s(CARD_W / 2), _s(638)),
+            (_s(CARD_W / 2), _s(646)),
             f"Retour brut : {_format_card_coins(payout)} coins  •  Nouveau solde : {_format_card_coins(balance)} coins",
             font=_font("regular", 21),
             fill=INK_MUTED,
             anchor="mm",
         )
+
+    brand_font = _font("bold", 21)
+    brand_text = "Propulsé par ScoobyBot"
+    brand_w = draw.textlength(brand_text, font=brand_font)
+    draw.text(
+        (_s(1256) - brand_w, _s(678)),
+        brand_text,
+        font=brand_font,
+        fill=INK_MUTED,
+        anchor="lm",
+    )
 
     return canvas.convert("RGB").resize((CARD_W, CARD_H), Image.LANCZOS)
 

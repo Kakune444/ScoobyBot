@@ -582,57 +582,41 @@ def render_slots_card(
         fill=BADGE_LABEL_BG,
         width=_s(2),
     )
-    pay_rows = [
-        ("PAIRE", 1.6),
-        ("TRIPLE", 4),
-        ("💎   ", 10),
-        ("7️⃣   ", 30),
+    paytable = [
+        ("PAIRE", "1,6×", False),
+        ("TRIPLE", "4×", False),
+        ("💎", "10×", True),
+        ("7️⃣", "30×", True),
     ]
     cell_pad = _s(28)
-    symbol_font = _font("bold", 30)
+    emoji_font = _font("bold", 30)
     label_font = _font("bold", 22)
-    total_pay = panel_w - 2 * cell_pad
-    item_w = total_pay / len(pay_rows)
-    label_emoji_size = _s(36)
-    is_emoji_label = lambda label: label in ("💎   ", "7️⃣   ")
-    for i, (label, mult) in enumerate(pay_rows):
-        cx = panel_x + cell_pad + item_w * (i + 0.5)
-        if is_emoji_label(label):
-            label_width = _rich_width(draw, label, symbol_font, emoji_map, label_emoji_size)
-            if label_width:
-                draw_rich_text(
-                    canvas,
-                    draw,
-                    _s(cx) - label_width / 2,
-                    _s(520),
-                    label,
-                    symbol_font,
-                    INK_SOFT,
-                    emoji_map,
-                    label_emoji_size,
-                )
-            else:
-                draw.text(
-                    (_s(cx), _s(520)),
-                    label,
-                    font=symbol_font,
-                    fill=INK_SOFT,
-                    anchor="mm",
-                )
+    col_w = (panel_w - 2 * cell_pad) / len(paytable)
+    emoji_size = _s(36)
+    for i, (glyph, value, is_emoji) in enumerate(paytable):
+        cx = panel_x + cell_pad + col_w * (i + 0.5)
+        if is_emoji and glyph in emoji_map:
+            gfx = emoji_map[glyph].resize((emoji_size, emoji_size), Image.LANCZOS)
+            icon_w = emoji_size + _s(2)
+            val_w = draw.textlength(value, font=label_font)
+            total_w = icon_w + val_w
+            gx = _s(cx) - total_w // 2
+            canvas.alpha_composite(gfx, (int(gx), int(_s(520) - emoji_size / 2)))
             draw.text(
-                (_s(cx + 20), _s(520)),
-                f"{mult}×",
-                font=label_font,
-                fill=INK_MUTED,
-                anchor="mm",
+                (gx + icon_w, _s(520)),
+                value, font=label_font, fill=INK_MUTED, anchor="lm",
+            )
+        elif is_emoji:
+            draw.text(
+                (_s(cx), _s(520)),
+                f"{glyph} {value}",
+                font=label_font, fill=INK_MUTED, anchor="mm",
             )
         else:
             draw.text(
                 (_s(cx), _s(520)),
-                f"{label} {mult:g}×",
-                font=label_font,
-                fill=INK_MUTED,
-                anchor="mm",
+                f"{glyph} {value}",
+                font=label_font, fill=INK_MUTED, anchor="mm",
             )
 
     status_fill = INK_SOFT

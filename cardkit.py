@@ -584,12 +584,9 @@ def render_slots_card(
     )
     pay_rows = [
         ("PAIRE", 1.6),
-        ("🍒", 4),
-        ("🍋", 5),
-        ("🍇", 6),
-        ("🔔", 8),
+        ("3×IDEM", 4),
         ("💎", 10),
-        ("7️⃣", 12),
+        ("7️⃣", 30),
     ]
     cell_pad = _s(28)
     symbol_font = _font("bold", 30)
@@ -597,45 +594,46 @@ def render_slots_card(
     total_pay = panel_w - 2 * cell_pad
     item_w = total_pay / len(pay_rows)
     label_emoji_size = _s(36)
+    is_emoji_label = lambda label: label in ("💎", "7️⃣")
     for i, (label, mult) in enumerate(pay_rows):
         cx = panel_x + cell_pad + item_w * (i + 0.5)
-        if label == "PAIRE":
+        if is_emoji_label(label):
+            label_width = _rich_width(draw, label, symbol_font, emoji_map, label_emoji_size)
+            if label_width:
+                draw_rich_text(
+                    canvas,
+                    draw,
+                    _s(cx) - label_width / 2,
+                    _s(520),
+                    label,
+                    symbol_font,
+                    INK_SOFT,
+                    emoji_map,
+                    label_emoji_size,
+                )
+            else:
+                draw.text(
+                    (_s(cx), _s(520)),
+                    label,
+                    font=symbol_font,
+                    fill=INK_SOFT,
+                    anchor="mm",
+                )
             draw.text(
-                (_s(cx), _s(511)),
-                f"PAIRE {mult:g}×",
+                (_s(cx + 20), _s(520)),
+                f"{mult}×",
                 font=label_font,
                 fill=INK_MUTED,
                 anchor="mm",
             )
-            continue
-        label_width = _rich_width(draw, label, symbol_font, emoji_map, label_emoji_size)
-        if label_width:
-            draw_rich_text(
-                canvas,
-                draw,
-                _s(cx) - label_width / 2,
-                _s(520),
-                label,
-                symbol_font,
-                INK_SOFT,
-                emoji_map,
-                label_emoji_size,
-            )
         else:
             draw.text(
                 (_s(cx), _s(520)),
-                label,
-                font=symbol_font,
-                fill=INK_SOFT,
+                f"{label} {mult:g}×",
+                font=label_font,
+                fill=INK_MUTED,
                 anchor="mm",
             )
-        draw.text(
-            (_s(cx + 20), _s(520)),
-            f"{mult}×",
-            font=label_font,
-            fill=INK_MUTED,
-            anchor="mm",
-        )
 
     status_fill = INK_SOFT
     if net is not None:

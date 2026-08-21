@@ -245,7 +245,7 @@ BEGIN
     IF p_bet NOT IN (1, 5, 10, 100) THEN
         RAISE EXCEPTION 'INVALID_SLOT_BET';
     END IF;
-    IF v_payout < 0 OR v_payout > p_bet * 12 THEN
+    IF v_payout < 0 OR v_payout > p_bet * 30 THEN
         RAISE EXCEPTION 'INVALID_SLOT_PAYOUT';
     END IF;
     IF p_reel_1 NOT IN ('🍒', '🍋', '🍇', '🔔', '💎', '7️⃣')
@@ -256,12 +256,9 @@ BEGIN
 
     IF p_reel_1 = p_reel_2 AND p_reel_2 = p_reel_3 THEN
         v_expected_payout := ROUND(p_bet * CASE p_reel_1
-            WHEN '🍒' THEN 4
-            WHEN '🍋' THEN 5
-            WHEN '🍇' THEN 6
-            WHEN '🔔' THEN 8
             WHEN '💎' THEN 10
-            WHEN '7️⃣' THEN 12
+            WHEN '7️⃣' THEN 30
+            ELSE 4
         END, 2);
         v_expected_result := 'triple_' || p_reel_1;
     ELSIF p_reel_1 = p_reel_2

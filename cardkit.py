@@ -660,6 +660,118 @@ def render_slots_card(
     return canvas.convert("RGB").resize((CARD_W, CARD_H), Image.LANCZOS)
 
 
+_ROULETTE_ORDER = (
+    0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10,
+    5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26,
+)
+_RED_NUMBERS = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+_ROULETTE_RED = (198, 47, 57, 255)
+_ROULETTE_BLACK = (18, 19, 21, 255)
+_ROULETTE_GREEN = (39, 139, 82, 255)
+
+
+def _roulette_color(n: int) -> tuple:
+    if n == 0:
+        return _ROULETTE_GREEN
+    return _ROULETTE_RED if n in _RED_NUMBERS else _ROULETTE_BLACK
+
+
+def _roulette_number_position(cx: float, cy: float, radius: float, angle_deg: float) -> tuple[float, float]:
+    import math
+    rad = math.radians(angle_deg)
+    return cx + radius * math.cos(rad), cy + radius * math.sin(rad)
+
+
+def render_roulette_card(
+    *,
+    result_num: int,
+    color_label: str,
+    balance: float,
+    bet: int,
+    bet_label: str,
+    status: str,
+    emoji_map: dict,
+    payout: float | None = None,
+    net: float | None = None,
+) -> Image.Image:
+    """Card roulette européenne — roue stylisée + mise + résultat, style stats/slots."""
+    import math
+    canvas = Image.new("RGBA", (_s(CARD_W), _s(CARD_H)), PAGE_BG)
+    draw = ImageDraw.Draw(canvas)
+
+    draw.text((_s(48), _s(48)), "SCOOBY ROULETTE", font=_font("bold", 34), fill=INK, anchor="lm")
+    draw.text(
+        (_s(1232), _s(48)),
+        f"Solde : {_format_card_coins(balance)} coins",
+        font=_font("bold", 25), fill=INK_SOFT, anchor="rm",
+    )
+
+    panel_x, panel_y, panel_w, panel_h = 76, 116, 1128, 444
+    draw.rounded_rectangle(
+        (_s(panel_x), _s(panel_y), _s(panel_x + panel_w), _s(panel_y + panel_h)),
+        radius=_s(24), fill=BLOCK_BG,
+    )
+    draw.text((_s(112), _s(151)), "ROULEETTE EUROPÉENNE", font=_font("bold", 22), fill=INK_MUTED, anchor="lm")
+    draw.text(
+        (_s(1168), _s(151)),
+        f"Mise : {_format_card_coins(bet)} coins — {bet_label}",
+        font=_font("bold", 22), fill=INK_SOFT, anchor="rm",
+    )
+
+    # Roue stylisée : ring de 37 secteurs colorés + numéros
+    cx, cy = 640, 350
+    r_out, r_in = 185, 128
+    n = len(_ROULETTE_ORDER)
+    num_font = _font("bold", 18)
+    for i, number in enumerate(_ROULETTE_ORDER):
+        a0 = i * 360 / n
+        a1 = (i + 1) * 360 / n
+        fill = _roulette_color(number)
+        outline = (255, 255, 255, 255) if number == result_num else (0, 0, 0, 0)
+        draw.pieslice(
+            (_s(cx - r_out), _s(cy - r_out), _s(cx + r_out), _s(cy + r_out)),
+            a0, a1, fill=fill, outline=outline, width=_s(2),
+        )
+        mid = (a0 + a1) / 2
+        px, py = _roulette_number_position(cx, cy, (r_in + r_out) / 2, mid)
+        draw.text((_s(px), _s(py)), str(number), font=num_font, fill=INK, anchor="mm")
+
+    # Moyeu avec le résultat
+    hub_r = 120
+    draw.ellipse((_s(cx - hub_r), _s(cy - hub_r), _s(cx + hub_r), _s(cy + hub_r)), fill=ROW_DARK, outline=BADGE_LABEL_BG, width=_s(2))
+    result_fill = _roulette_color(result_num)
+    draw.ellipse((_s(cx - 46), _s(cy - 46), _s(cx + 46), _s(cy + 46)), fill=result_fill, outline=(255, 255, 255, 255), width=_s(3))
+    draw.text((_s(cx), _s(cy - 20)), str(result_num), font=_font("bold", 40), fill=INK, anchor="mm")
+    draw.text((_s(cx), _s(cy + 26)), color_label.upper(), font=_font("bold", 18), fill=INK, anchor="mm")
+
+    # Status / gain-perte
+    status_fill = INK_SOFT
+    if net is not None:
+        status_fill = SERIES_MESSAGES if net > 0 else (226, 82, 96, 255)
+    status_font = _font("bold", 29)
+    status_emoji_size = _s(31)
+    status_width = _rich_width(draw, status, status_font, emoji_map, status_emoji_size)
+    draw_rich_text(
+        canvas, draw,
+        _s(CARD_W / 2) - status_width / 2, _s(604),
+        status, status_font, status_fill, emoji_map, status_emoji_size,
+    )
+
+    if payout is not None:
+        draw.text(
+            (_s(CARD_W / 2), _s(646)),
+            f"Retour brut : {_format_card_coins(payout)} coins  •  Nouveau solde : {_format_card_coins(balance)} coins",
+            font=_font("regular", 21), fill=INK_MUTED, anchor="mm",
+        )
+
+    brand_font = _font("bold", 21)
+    brand_text = "Propulsé par ScoobyBot"
+    brand_w = draw.textlength(brand_text, font=brand_font)
+    draw.text((_s(1256) - brand_w, _s(678)), brand_text, font=brand_font, fill=INK_MUTED, anchor="lm")
+
+    return canvas.convert("RGB").resize((CARD_W, CARD_H), Image.LANCZOS)
+
+
 def _format_card_coins(amount: float) -> str:
     return f"{amount:.2f}".rstrip("0").rstrip(".")
 

@@ -9,13 +9,20 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from cardkit import collect_emojis, fetch_emoji_images, render_slots_card, to_discord_file
+from cardkit import (
+    collect_emojis,
+    fetch_emoji_images,
+    render_roulette_card,
+    render_slots_card,
+    to_discord_file,
+)
 from cogs.scooby_quotes import scooby_quote
 from supabase_client import (
     award_coins,
     close_voice_session,
     fire_and_forget,
     get_coin_balance,
+    play_roulette,
     play_slots,
 )
 
@@ -46,6 +53,71 @@ SLOT_BETS = (1, 5, 10, 100)
 SLOT_ANIMATION_FRAMES = 9
 SLOT_ANIMATION_INTERVAL = 0.30
 _SLOT_RNG = random.SystemRandom()
+
+# Roulette européenne (un seul zéro). Paiements : Plein 35:1, 1:1 pour
+# Rouge/Noir/Pair/Impair/Manque/Passe, 2:1 pour Douzaine/Colonne.
+ROULETTE_TYPES = {
+    "plein": "Plein (numéro)",
+    "rouge": "Rouge",
+    "noir": "Noir",
+    "pair": "Pair",
+    "impair": "Impair",
+    "manque": "Manque (1-18)",
+    "passe": "Passe (19-36)",
+    "douzaine": "Douzaine",
+    "colonne": "Colonne",
+}
+ROULETTE_ODDS = {
+    "plein": "35:1", "rouge": "1:1", "noir": "1:1", "pair": "1:1",
+    "impair": "1:1", "manque": "1:1", "passe": "1:1",
+    "douzaine": "2:1", "colonne": "2:1",
+}
+ROULETTE_RED_NUMBERS = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+ROULETTE_MIN_BET = 1
+ROULETTE_MAX_BET = 100000
+ROULETTE_TIMEOUT = 180
+
+
+def _roulette_color(number: int) -> str:
+    if number == 0:
+        return "vert"
+    return "rouge" if number in ROULETTE_RED_NUMBERS else "noir"
+
+
+def _roulette_multiplier(bet_type: str, param: str | None, number: int) -> float:
+    """Retour brut (mise comprise) : 36 / 2 / 3 / 0."""
+    if bet_type == "plein":
+        return 36.0 if param == str(number) else 0.0
+    color = _roulette_color(number)
+    if bet_type == "rouge":
+        return 2.0 if color == "rouge" else 0.0
+    if bet_type == "noir":
+        return 2.0 if color == "noir" else 0.0
+    if bet_type == "pair":
+        return 2.0 if number != 0 and number % 2 == 0 else 0.0
+    if bet_type == "impair":
+        return 2.0 if number != 0 and number % 2 == 1 else 0.0
+    if bet_type == "manque":
+        return 2.0 if 1 <= number <= 18 else 0.0
+    if bet_type == "passe":
+        return 2.0 if 19 <= number <= 36 else 0.0
+    if bet_type == "douzaine":
+        ranges = {"1-12": range(1, 13), "13-24": range(13, 25), "25-36": range(25, 37)}
+        return 3.0 if number in ranges.get(param, ()) else 0.0
+    if bet_type == "colonne":
+        col = {"1ere": 1, "2eme": 2, "3eme": 0}
+        return 3.0 if number != 0 and number % 3 == col.get(param, -1) else 0.0
+    return 0.0
+
+
+def _roulette_bet_label(bet_type: str, param: str | None) -> str:
+    if bet_type == "plein":
+        return f"Plein n°{param}"
+    if bet_type == "douzaine":
+        return f"Douzaine {param}"
+    if bet_type == "colonne":
+        return f"Colonne {param}"
+    return ROULETTE_TYPES[bet_type]
 
 
 def _format_coins(amount: float) -> str:
@@ -300,8 +372,34 @@ class Economy(commands.Cog):
             ),
             inline=False,
         )
+        embed.add_field(
+            name="🎡 Roulette",
+            value=(
+                "`/roulette` — roulette européenne (RTP 97,30 %).\n"
+                "• 1:1 (Rouge/Noir, Pair/Impair, Manque/Passe)\n"
+                "• 2:1 (Douzaine, Colonne) · 35:1 (Plein)"
+            ),
+            inline=False,
+        )
         embed.set_footer(text="Propulsé par ScoobyBot")
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="roulette", description="Jouer à la roulette européenne")
+    @app_commands.guild_only()
+    async def roulette(self, interaction: discord.Interaction):
+        view = RouletteView(interaction)
+        embed = discord.Embed(
+            title="🎡 Roulette européenne",
+            description=(
+                "Choisis ton type de mise, puis saisis le montant.\n"
+                "Rouge/Noir, Pair/Impair, Manque/Passe → **1:1**\n"
+                "Douzaine/Colonne → **2:1** · Plein → **35:1**\n"
+                "RTP théorique **97,30 %** (un seul zéro)."
+            ),
+            color=discord.Color.red(),
+        )
+        embed.set_footer(text="Propulsé par ScoobyBot")
+        await interaction.response.send_message(embed=embed, view=view)
 
     @app_commands.command(name="balance", description="Afficher ton solde de coins")
     @app_commands.guild_only()
@@ -313,6 +411,220 @@ class Economy(commands.Cog):
         await interaction.response.send_message(
             f"💰 {interaction.user.mention}, tu as **{_format_coins(amount)} coins**.\n"
             f"💬 *{scooby_quote()}*"
+        )
+
+
+class RouletteView(discord.ui.View):
+    """UI de la roulette : type de mise (select), puis montant (modal)."""
+
+    def __init__(self, interaction: discord.Interaction):
+        super().__init__(timeout=ROULETTE_TIMEOUT)
+        self.guild_id = interaction.guild.id
+        self.user_id = interaction.user.id
+        self.bet_type: str | None = None
+        self.param: str | None = None
+        self._rebuild()
+
+    def _add_type_select(self):
+        select = discord.ui.Select(placeholder="Type de mise…")
+        for value, label in ROULETTE_TYPES.items():
+            select.add_option(label=label, value=value)
+
+        async def on_type(select_interaction: discord.Interaction):
+            self.bet_type = select_interaction.data["values"][0]
+            self.param = None
+            self._rebuild()
+            await select_interaction.response.edit_message(view=self)
+
+        select.callback = on_type
+        self.add_item(select)
+
+    def _add_param_select(self):
+        if self.bet_type == "douzaine":
+            options = [("1-12", "Douzaine 1 (1-12)"), ("13-24", "Douzaine 2 (13-24)"), ("25-36", "Douzaine 3 (25-36)")]
+        else:  # colonne
+            options = [("1ere", "Colonne 1"), ("2eme", "Colonne 2"), ("3eme", "Colonne 3")]
+
+        select = discord.ui.Select(placeholder="Choisis la colonne / douzaine…")
+        for value, label in options:
+            select.add_option(label=label, value=value)
+
+        async def on_param(param_interaction: discord.Interaction):
+            self.param = param_interaction.data["values"][0]
+            self._rebuild()
+            await param_interaction.response.edit_message(view=self)
+
+        select.callback = on_param
+        self.add_item(select)
+
+    def _add_bet_button(self):
+        button = discord.ui.Button(label="Miser", style=discord.ButtonStyle.success)
+
+        async def on_bet(bet_interaction: discord.Interaction):
+            if self.bet_type is None:
+                await bet_interaction.response.send_message(
+                    "Choisis d'abord un type de mise.", ephemeral=True
+                )
+                return
+            if self.bet_type in ("douzaine", "colonne") and self.param is None:
+                await bet_interaction.response.send_message(
+                    "Choisis d'abord la douzaine / colonne.", ephemeral=True
+                )
+                return
+            modal = RouletteAmountModal(self, bet_interaction.user)
+            await bet_interaction.response.send_modal(modal)
+
+        button.callback = on_bet
+        self.add_item(button)
+
+    def _rebuild(self):
+        self.clear_items()
+        self._add_type_select()
+        if self.bet_type in ("douzaine", "colonne"):
+            self._add_param_select()
+        self._add_bet_button()
+
+
+class RouletteAmountModal(discord.ui.Modal):
+    """Modal : montant libre (+ numéro pour le Plein)."""
+
+    def __init__(self, view: RouletteView, user: discord.User):
+        super().__init__(title="Mise roulette")
+        self.view = view
+        self.user_id = user.id
+        self.amount_input = discord.ui.TextInput(
+            label="Montant (coins)", min_length=1, max_length=10,
+            placeholder=f"{ROULETTE_MIN_BET} – {ROULETTE_MAX_BET}",
+        )
+        self.add_item(self.amount_input)
+        if view.bet_type == "plein":
+            self.number_input = discord.ui.TextInput(
+                label="Numéro (0-36)", min_length=1, max_length=2,
+                placeholder="0 à 36",
+            )
+            self.add_item(self.number_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "Cette mise ne t'appartient pas.", ephemeral=True
+            )
+            return
+
+        try:
+            amount = round(float(self.amount_input.value.replace(",", ".")), 2)
+        except ValueError:
+            await interaction.response.send_message(
+                "Montant invalide.", ephemeral=True
+            )
+            return
+        if amount < ROULETTE_MIN_BET or amount > ROULETTE_MAX_BET:
+            await interaction.response.send_message(
+                f"Mise entre **{ROULETTE_MIN_BET}** et **{ROULETTE_MAX_BET}** coins.",
+                ephemeral=True,
+            )
+            return
+
+        param = self.view.param
+        if self.view.bet_type == "plein":
+            try:
+                num = int(self.number_input.value)
+            except ValueError:
+                num = -1
+            if num < 0 or num > 36:
+                await interaction.response.send_message(
+                    "Numéro invalide (0-36).", ephemeral=True
+                )
+                return
+            param = str(num)
+
+        guild_id = self.view.guild_id
+        user_id = self.view.user_id
+        bet_type = self.view.bet_type
+
+        try:
+            balance = await get_coin_balance(guild_id=guild_id, user_id=user_id)
+        except Exception as error:
+            print(f"Erreur Supabase (solde roulette) : {error}")
+            await interaction.response.send_message(
+                "Impossible de vérifier ton solde. Réessaie dans quelques instants.",
+                ephemeral=True,
+            )
+            return
+
+        if amount > balance:
+            await interaction.response.send_message(
+                f"Solde insuffisant : il te faut **{_format_coins(amount)} coins** "
+                f"et tu en as **{_format_coins(balance)}**.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        result_num = random.randint(0, 36)
+        color = _roulette_color(result_num)
+        multiplier = _roulette_multiplier(bet_type, param, result_num)
+        payout = round(amount * multiplier, 2)
+        game_id = str(uuid.uuid4())
+        bet_label = _roulette_bet_label(bet_type, param)
+
+        try:
+            outcome = await play_roulette(
+                game_id=game_id,
+                guild_id=guild_id,
+                user_id=user_id,
+                bet_type=bet_type,
+                bet_param=param,
+                bet=amount,
+                result_num=result_num,
+                payout=payout,
+            )
+        except Exception as error:
+            if "INSUFFICIENT_COINS" in str(error):
+                await interaction.followup.send(
+                    "Ton solde a changé entre-temps : pas assez de coins pour cette mise.",
+                    ephemeral=True,
+                )
+                return
+            print(f"Erreur Supabase (roulette) : {error}")
+            await interaction.followup.send(
+                "La partie n'a pas pu être enregistrée. Aucun coin débité.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            emoji_map = await fetch_emoji_images(collect_emojis("🎡", "🔴", "⚫", "🟢"))
+        except Exception as error:
+            print(f"Erreur Twemoji (roulette) : {error}")
+            emoji_map = {}
+
+        await interaction.edit_original_response(
+            content="🎡 **La roulette tourne…**", attachments=[], view=None
+        )
+        await asyncio.sleep(1.2)
+
+        net = outcome["net"]
+        if net > 0:
+            status = f"✅ GAIN  •  +{_format_coins(net)} coins"
+        elif net < 0:
+            status = f"❌ PERDU  •  {_format_coins(net)} coins"
+        else:
+            status = "😶 Mise rendue  •  retourné sur 0"
+        image = render_roulette_card(
+            result_num=result_num,
+            color_label=color,
+            balance=outcome["balance"],
+            bet=amount,
+            bet_label=f"{bet_label} ({ROULETTE_ODDS[bet_type]})",
+            status=status,
+            emoji_map=emoji_map,
+            payout=outcome["payout"],
+            net=net,
+        )
+        await interaction.edit_original_response(
+            content=None, attachments=[to_discord_file(image, "roulette.png")]
         )
 
 

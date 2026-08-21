@@ -389,3 +389,252 @@ BEGIN
     RETURN QUERY SELECT v_balance, v_payout, v_net;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Roulette européenne -------------------------------------------------------
+-- Un seul zéro (0), pas de double zéro. Paiements standards :
+--   Plein (numéro sec)       → 35:1  (payout = 36 × bet)
+--   Rouge/Noir, Pair/Impair,
+--   Manque(1-18)/Passe(19-36) → 1:1  (payout = 2 × bet)
+--   Douzaine, Colonne         → 2:1  (payout = 3 × bet)
+-- RTP = 36/37 ≈ 97,30% pour tous les paris (le zéro ne paie que le Plein).
+
+CREATE TABLE IF NOT EXISTS roulette_games (
+    game_id      UUID PRIMARY KEY,
+    guild_id     BIGINT NOT NULL,
+    user_id      BIGINT NOT NULL,
+    bet_type     TEXT NOT NULL CHECK (bet_type IN (
+                     'plein','rouge','noir','pair','impair',
+                     'manque','passe','douzaine','colonne'
+                 )),
+    bet_param    TEXT,
+    bet          NUMERIC(20, 2) NOT NULL CHECK (bet > 0),
+    result_num   SMALLINT NOT NULL CHECK (result_num BETWEEN 0 AND 36),
+    result_color TEXT NOT NULL CHECK (result_color IN ('rouge','noir','vert')),
+    payout       NUMERIC(20, 2) NOT NULL CHECK (payout >= 0),
+    net          NUMERIC(20, 2) NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (net = payout - bet)
+);
+
+CREATE INDEX IF NOT EXISTS roulette_games_guild_user_created_idx
+    ON roulette_games (guild_id, user_id, created_at DESC);
+
+ALTER TABLE roulette_games ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION roulette_color(n SMALLINT)
+RETURNS TEXT IMMUTABLE PARALLEL SAFE AS $$
+BEGIN
+    IF n = 0 THEN
+        RETURN 'vert';
+    ELSIF n IN (1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36) THEN
+        RETURN 'rouge';
+    ELSE
+        RETURN 'noir';
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION roulette_payout_multiplier(
+    p_bet_type    TEXT,
+    p_bet_param   TEXT,
+    p_result_num  SMALLINT
+) RETURNS NUMERIC IMMUTABLE PARALLEL SAFE AS $$
+DECLARE
+    v_color TEXT;
+BEGIN
+    v_color := roulette_color(p_result_num);
+
+    IF p_bet_type = 'plein' THEN
+        IF p_bet_param = p_result_num::TEXT THEN
+            RETURN 36;
+        END IF;
+    ELSIF p_bet_type = 'rouge' THEN
+        IF v_color = 'rouge' THEN
+            RETURN 2;
+        END IF;
+    ELSIF p_bet_type = 'noir' THEN
+        IF v_color = 'noir' THEN
+            RETURN 2;
+        END IF;
+    ELSIF p_bet_type = 'pair' THEN
+        IF p_result_num <> 0 AND p_result_num % 2 = 0 THEN
+            RETURN 2;
+        END IF;
+    ELSIF p_bet_type = 'impair' THEN
+        IF p_result_num <> 0 AND p_result_num % 2 = 1 THEN
+            RETURN 2;
+        END IF;
+    ELSIF p_bet_type = 'manque' THEN
+        IF p_result_num BETWEEN 1 AND 18 THEN
+            RETURN 2;
+        END IF;
+    ELSIF p_bet_type = 'passe' THEN
+        IF p_result_num BETWEEN 19 AND 36 THEN
+            RETURN 2;
+        END IF;
+    ELSIF p_bet_type = 'douzaine' THEN
+        IF p_bet_param = '1-12' AND p_result_num BETWEEN 1 AND 12 THEN
+            RETURN 3;
+        ELSIF p_bet_param = '13-24' AND p_result_num BETWEEN 13 AND 24 THEN
+            RETURN 3;
+        ELSIF p_bet_param = '25-36' AND p_result_num BETWEEN 25 AND 36 THEN
+            RETURN 3;
+        END IF;
+    ELSIF p_bet_type = 'colonne' THEN
+        IF p_bet_param = '1ere' AND p_result_num % 3 = 1 THEN
+            RETURN 3;
+        ELSIF p_bet_param = '2eme' AND p_result_num % 3 = 2 THEN
+            RETURN 3;
+        ELSIF p_bet_param = '3eme' AND p_result_num % 3 = 0 THEN
+            RETURN 3;
+        END IF;
+    END IF;
+
+    RETURN 0; -- perte
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION play_roulette(
+    p_game_id     UUID,
+    p_guild_id    BIGINT,
+    p_user_id     BIGINT,
+    p_bet_type    TEXT,
+    p_bet_param   TEXT,
+    p_bet         NUMERIC,
+    p_result_num  SMALLINT,
+    p_payout      NUMERIC
+) RETURNS TABLE(new_balance NUMERIC, payout NUMERIC, net NUMERIC) AS $$
+DECLARE
+    v_existing   roulette_games%ROWTYPE;
+    v_balance    NUMERIC;
+    v_payout     NUMERIC(20, 2) := ROUND(p_payout, 2);
+    v_net        NUMERIC(20, 2);
+    v_expected_mult NUMERIC;
+    v_expected_payout NUMERIC(20, 2);
+    v_color      TEXT;
+    v_key        TEXT := 'roulette:' || p_game_id::TEXT;
+    v_now        TIMESTAMPTZ := now();
+    v_voice_amount NUMERIC(20, 2);
+    v_voice_key  TEXT;
+    v_session    voice_sessions%ROWTYPE;
+BEGIN
+    -- Idempotence
+    SELECT * INTO v_existing FROM roulette_games WHERE game_id = p_game_id;
+    IF FOUND THEN
+        SELECT balance INTO v_balance
+        FROM coin_balances
+        WHERE guild_id = v_existing.guild_id AND user_id = v_existing.user_id;
+        RETURN QUERY SELECT v_balance, v_existing.payout, v_existing.net;
+        RETURN;
+    END IF;
+
+    v_color := roulette_color(p_result_num);
+
+    -- Valider le type de mise
+    IF p_bet_type NOT IN ('plein','rouge','noir','pair','impair','manque','passe','douzaine','colonne') THEN
+        RAISE EXCEPTION 'INVALID_ROULETTE_BET_TYPE';
+    END IF;
+    IF p_bet <= 0 THEN
+        RAISE EXCEPTION 'INVALID_ROULETTE_BET';
+    END IF;
+    IF p_result_num < 0 OR p_result_num > 36 THEN
+        RAISE EXCEPTION 'INVALID_ROULETTE_RESULT';
+    END IF;
+
+    -- Calculer le paiement attendu côté serveur
+    v_expected_mult := roulette_payout_multiplier(p_bet_type, p_bet_param, p_result_num);
+    v_expected_payout := ROUND(p_bet * v_expected_mult, 2);
+    IF v_payout <> v_expected_payout THEN
+        RAISE EXCEPTION 'INVALID_ROULETTE_PAYOUT expected=% actual=%', v_expected_payout, v_payout;
+    END IF;
+
+    -- Verrouiller les sessions vocales (même ordre que les autres RPC)
+    FOR v_session IN
+        SELECT * FROM voice_sessions
+        WHERE guild_id = p_guild_id AND user_id = p_user_id AND left_at IS NULL
+        FOR UPDATE
+    LOOP
+        NULL;
+    END LOOP;
+
+    INSERT INTO coin_balances (guild_id, user_id)
+    VALUES (p_guild_id, p_user_id)
+    ON CONFLICT (guild_id, user_id) DO NOTHING;
+
+    SELECT balance INTO v_balance
+    FROM coin_balances
+    WHERE guild_id = p_guild_id AND user_id = p_user_id
+    FOR UPDATE;
+
+    -- Re-vérifier idempotence sous verrou
+    SELECT * INTO v_existing FROM roulette_games WHERE game_id = p_game_id;
+    IF FOUND THEN
+        RETURN QUERY SELECT v_balance, v_existing.payout, v_existing.net;
+        RETURN;
+    END IF;
+
+    -- Matérialiser le vocal en cours
+    FOR v_session IN
+        SELECT * FROM voice_sessions
+        WHERE guild_id = p_guild_id AND user_id = p_user_id AND left_at IS NULL
+        FOR UPDATE
+    LOOP
+        v_voice_amount := ROUND(
+            EXTRACT(EPOCH FROM (v_now - v_session.joined_at)) * 5 / 3600, 2
+        );
+        IF v_voice_amount > 0 THEN
+            v_voice_key := 'voice:' || v_session.session_id::TEXT || ':' || p_game_id::TEXT;
+            UPDATE coin_balances
+            SET balance = balance + v_voice_amount,
+                transactions = transactions || jsonb_build_object(
+                    v_voice_key,
+                    jsonb_build_object(
+                        'transaction_id', v_voice_key,
+                        'amount', v_voice_amount,
+                        'reason', 'voice',
+                        'source_id', v_session.session_id::TEXT,
+                        'created_at', v_now
+                    )
+                ),
+                updated_at = v_now
+            WHERE guild_id = p_guild_id AND user_id = p_user_id;
+            v_balance := v_balance + v_voice_amount;
+            UPDATE voice_sessions SET joined_at = v_now WHERE session_id = v_session.session_id;
+        END IF;
+    END LOOP;
+
+    IF v_balance < p_bet THEN
+        RAISE EXCEPTION 'INSUFFICIENT_COINS';
+    END IF;
+
+    v_net := ROUND(v_payout - p_bet, 2);
+
+    INSERT INTO roulette_games (game_id, guild_id, user_id, bet_type, bet_param, bet, result_num, result_color, payout, net)
+    VALUES (p_game_id, p_guild_id, p_user_id, p_bet_type, p_bet_param, ROUND(p_bet, 2), p_result_num, v_color, v_payout, v_net);
+
+    UPDATE coin_balances
+    SET balance = balance + v_net,
+        transactions = transactions || jsonb_build_object(
+            v_key,
+            jsonb_build_object(
+                'transaction_id', v_key,
+                'amount', v_net,
+                'reason', 'roulette',
+                'source_id', p_game_id::TEXT,
+                'bet', ROUND(p_bet, 2),
+                'payout', v_payout,
+                'net', v_net,
+                'bet_type', p_bet_type,
+                'bet_param', p_bet_param,
+                'result_num', p_result_num,
+                'result_color', v_color,
+                'created_at', now()
+            )
+        ),
+        updated_at = now()
+    WHERE guild_id = p_guild_id AND user_id = p_user_id
+    RETURNING balance INTO v_balance;
+
+    RETURN QUERY SELECT v_balance, v_payout, v_net;
+END;
+$$ LANGUAGE plpgsql;

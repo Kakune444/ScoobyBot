@@ -143,6 +143,27 @@ async def play_slots(*, game_id, guild_id, user_id, bet, reel_1, reel_2, reel_3,
     }
 
 
+async def play_roulette(*, game_id, guild_id, user_id, bet_type, bet_param, bet, result_num, payout) -> dict:
+    """Roulette européenne atomique avec logging dans roulette_games."""
+    client = await get_client()
+    response = await client.rpc("play_roulette", {
+        "p_game_id": str(game_id),
+        "p_guild_id": guild_id,
+        "p_user_id": user_id,
+        "p_bet_type": bet_type,
+        "p_bet_param": bet_param,
+        "p_bet": bet,
+        "p_result_num": result_num,
+        "p_payout": payout,
+    }).execute()
+    row = response.data[0] if isinstance(response.data, list) else response.data
+    return {
+        "balance": float(row["new_balance"]),
+        "payout": float(row["payout"]),
+        "net": float(row["net"]),
+    }
+
+
 async def insert_completed_voice_session(*, guild_id, user_id, channel_id, joined_at, left_at):
     """Session déjà close, insérée directement — utilisé par /addtime pour créditer du temps manuellement."""
     client = await get_client()

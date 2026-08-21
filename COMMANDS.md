@@ -54,9 +54,10 @@ Les gains sont séparés par serveur et persistants dans Supabase : **5 coins pa
 
 | Commande | Description |
 |---|---|
-| `/eco` | Aide sur l'économie : gains et toutes les commandes économie (balance, slots). |
+| `/eco` | Aide sur l'économie : gains et toutes les commandes économie (balance, slots, roulette). |
 | `/balance` | Affiche le solde de coins de l'utilisateur sur le serveur actuel. |
 | `/slots <mise>` | Joue à la machine à sous avec une mise de 1, 5, 10 ou 100 coins. |
+| `/roulette` | Roulette européenne (RTP 97,30 %). Mises : Plein (35:1), Rouge/Noir, Pair/Impair, Manque/Passe (1:1), Douzaine/Colonne (2:1). Montant libre (1 à 100 000). |
 
 ## Statistiques (`cogs/stats.py` + `cogs/statcommands.py` + `cardkit.py`)
 

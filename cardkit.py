@@ -823,24 +823,21 @@ def render_roulette_card(
             _s(cx) - label_w / 2, _s(msg_y),
             label, label_font, INK_SOFT, emoji_map, _s(30),
         )
-    elif state == "bet":
-        label = "Choisis une mise"
-        label_font = _font("bold", 26)
-        label_w = draw.textlength(label, font=label_font)
-        draw.text((_s(cx) - label_w / 2, _s(msg_y)), label, font=label_font, fill=INK_SOFT, anchor="mm")
-    else:  # land
-        status_fill = SERIES_MESSAGES if net is not None and net >= 0 else (226, 82, 96, 255)
-        status_text = (
-            f"✅ +{_format_card_coins(net)} coins" if net is not None and net > 0
-            else (f"❌ {_format_card_coins(net)} coins" if net is not None else "")
-        )
-        status_font = _font("bold", 30)
-        status_w = _rich_width(draw, status_text, status_font, emoji_map, _s(32))
-        draw_rich_text(
-            canvas, draw,
-            _s(cx) - status_w / 2, _s(msg_y),
-            status_text, status_font, status_fill, emoji_map, _s(32),
-        )
+    else:  # bet ou land : on n'affiche que le résultat quand il existe
+        if state == "land":
+            status_fill = SERIES_MESSAGES if net is not None and net >= 0 else (226, 82, 96, 255)
+            status_text = (
+                f"✅ +{_format_card_coins(net)} coins" if net is not None and net > 0
+                else (f"❌ {_format_card_coins(net)} coins" if net is not None else "")
+            )
+            if status_text:
+                status_font = _font("bold", 30)
+                status_w = _rich_width(draw, status_text, status_font, emoji_map, _s(32))
+                draw_rich_text(
+                    canvas, draw,
+                    _s(cx) - status_w / 2, _s(msg_y),
+                    status_text, status_font, status_fill, emoji_map, _s(32),
+                )
 
     brand_font = _font("bold", 21)
     brand_text = "Propulsé par ScoobyBot"

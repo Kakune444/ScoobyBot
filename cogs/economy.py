@@ -492,12 +492,11 @@ def _roulette_bet_view(user_id: int, amount: int) -> discord.ui.View:
 class _RouletteModal(discord.ui.Modal):
     """Modal : numéro (Plein) ou douzaine/colonne. La mise vient de /roulette."""
 
-    def __init__(self, bet_type: str, user_id: int, amount: int, message: discord.Message):
+    def __init__(self, bet_type: str, user_id: int, amount: int):
         super().__init__(title=f"{ROULETTE_TYPES[bet_type]} — {_format_coins(amount)} coins ({ROULETTE_ODDS[bet_type]})")
         self.bet_type = bet_type
         self.user_id = user_id
         self.amount = amount
-        self.message = message
         if bet_type == "plein":
             self.number_input = discord.ui.TextInput(
                 label="Numéro (0-36)", min_length=1, max_length=2, placeholder="0 à 36",
@@ -560,8 +559,6 @@ class _RouletteModal(discord.ui.Modal):
             )
             return
 
-        await interaction.response.defer()
-
         result_num = random.randint(0, 36)
         color = _roulette_color(result_num)
         multiplier = _roulette_multiplier(bet_type, param, result_num)
@@ -576,13 +573,13 @@ class _RouletteModal(discord.ui.Modal):
             )
         except Exception as error:
             if "INSUFFICIENT_COINS" in str(error):
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     "Ton solde a changé entre-temps : pas assez de coins pour cette mise.",
                     ephemeral=True,
                 )
                 return
             print(f"Erreur Supabase (roulette) : {error}")
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 "La partie n'a pas pu être enregistrée. Aucun coin débité.",
                 ephemeral=True,
             )
@@ -594,45 +591,27 @@ class _RouletteModal(discord.ui.Modal):
             print(f"Erreur Twemoji (roulette) : {error}")
             emoji_map = {}
 
-        def _render(state: str, frame: int = 0, *, view=None) -> tuple:
-            return to_discord_file(render_roulette_card(
-                state=state, frame=frame,
-                result_num=result_num if state == "land" else None,
-                color_label=color if state == "land" else None,
-                balance=outcome["balance"],
-                bet=amount,
-                bet_label=f"{bet_label} ({ROULETTE_ODDS[bet_type]})",
-                emoji_map=emoji_map,
-                payout=outcome["payout"] if state == "land" else None,
-                net=outcome["net"] if state == "land" else None,
-            ), "roulette.png")
-
-        # State 2 : bille lancée (3 frames)
-        for frame in range(3):
-            try:
-                await self.message.edit(
-                    content=None, attachments=[_render("spin", frame)], view=None,
-                )
-            except discord.NotFound:
-                return
-            except discord.HTTPException as error:
-                print(f"Erreur Discord (animation roulette) : {error}")
-                return
-            await asyncio.sleep(0.45)
-
-        # State 3 : atterrissage + gains (3 frames)
-        for frame in range(3):
-            try:
-                await self.message.edit(
-                    content=None, attachments=[_render("land", frame)],
-                    view=None if frame < 2 else _roulette_bet_view(user_id, amount),
-                )
-            except discord.NotFound:
-                return
-            except discord.HTTPException as error:
-                print(f"Erreur Discord (animation roulette) : {error}")
-                return
-            await asyncio.sleep(0.55)
+        image = render_roulette_card(
+            state="land",
+            result_num=result_num,
+            color_label=color,
+            balance=outcome["balance"],
+            bet=amount,
+            bet_label=f"{bet_label} ({ROULETTE_ODDS[bet_type]})",
+            emoji_map=emoji_map,
+            payout=outcome["payout"],
+            net=outcome["net"],
+        )
+        try:
+            await interaction.response.edit_message(
+                content=None,
+                attachments=[to_discord_file(image, "roulette.png")],
+                view=_roulette_bet_view(user_id, amount),
+            )
+        except discord.NotFound:
+            return
+        except discord.HTTPException as error:
+            print(f"Erreur Discord (résultat roulette) : {error}")
 
 
 async def setup(bot):

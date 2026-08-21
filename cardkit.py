@@ -728,18 +728,25 @@ def render_roulette_card(
     )
 
     # --- Colonne de gauche : Paiements, puis Mise juste en dessous
-    legend_x, legend_y, legend_w, legend_h = 112, 150, 330, 230
+    legend_x, legend_y, legend_w, legend_h = 112, 150, 330, 215
     draw.rounded_rectangle(
         (_s(legend_x), _s(legend_y), _s(legend_x + legend_w), _s(legend_y + legend_h)),
         radius=_s(16), fill=ROW_DARK,
     )
-    draw.text((_s(legend_x + 20), _s(legend_y + 26)), "PAIEMENTS", font=_font("bold", 18), fill=INK_MUTED, anchor="lm")
+    draw.text((_s(legend_x + 20), _s(legend_y + 24)), "PAIEMENTS", font=_font("bold", 18), fill=INK_MUTED, anchor="lm")
+    draw.line(
+        (_s(legend_x + 20), _s(legend_y + 46), _s(legend_x + legend_w - 20), _s(legend_y + 46)),
+        fill=BADGE_LABEL_BG, width=_s(1),
+    )
+    # Colonne de gauche = type de mise, colonne de droite = cote (alignement fixe)
+    col_name_x = legend_x + 20
+    col_ratio_x = legend_x + legend_w - 20
     for i, (name, ratio) in enumerate(_ROULETTE_PAYTABLE):
-        row_y = legend_y + 60 + i * 33
-        draw.text((_s(legend_x + 20), _s(row_y)), name, font=_font("regular", 18), fill=INK_SOFT, anchor="lm")
-        draw.text((_s(legend_x + legend_w - 20), _s(row_y)), ratio, font=_font("bold", 18), fill=INK, anchor="rm")
+        row_y = legend_y + 72 + i * 23
+        draw.text((_s(col_name_x), _s(row_y)), name, font=_font("regular", 17), fill=INK_SOFT, anchor="lm")
+        draw.text((_s(col_ratio_x), _s(row_y)), ratio, font=_font("bold", 17), fill=INK, anchor="rm")
 
-    bet_x, bet_y, bet_w, bet_h = 112, 400, 330, 210
+    bet_x, bet_y, bet_w, bet_h = 112, 395, 330, 205
     draw.rounded_rectangle(
         (_s(bet_x), _s(bet_y), _s(bet_x + bet_w), _s(bet_y + bet_h)),
         radius=_s(16), fill=ROW_DARK,
@@ -804,23 +811,24 @@ def render_roulette_card(
             (_s(bx - 9), _s(by - 9), _s(bx + 9), _s(by + 9)),
             fill=(240, 240, 240, 255), outline=(0, 0, 0, 120),
         )
-        if state == "spin":
-            label = "🎡 La roulette tourne…"
-            label_font = _font("bold", 26)
-            label_w = _rich_width(draw, label, label_font, emoji_map, _s(30))
-            draw_rich_text(
-                canvas, draw,
-                _s(cx) - label_w / 2, _s(cy),
-                label, label_font, INK_SOFT, emoji_map, _s(30),
-            )
-        else:
-            label = "Choisis une mise"
-            label_font = _font("bold", 26)
-            label_w = draw.textlength(label, font=label_font)
-            draw.text((_s(cx) - label_w / 2, _s(cy)), label, font=label_font, fill=INK_SOFT, anchor="mm")
 
-    # --- Statut (gain/perte) centré sous la roue, sur son axe X
-    if state == "land":
+    # --- Message de statut SOUS la roue, centré sur son axe X
+    msg_y = cy + 250
+    if state == "spin":
+        label = "🎡 La roulette tourne…"
+        label_font = _font("bold", 26)
+        label_w = _rich_width(draw, label, label_font, emoji_map, _s(30))
+        draw_rich_text(
+            canvas, draw,
+            _s(cx) - label_w / 2, _s(msg_y),
+            label, label_font, INK_SOFT, emoji_map, _s(30),
+        )
+    elif state == "bet":
+        label = "Choisis une mise"
+        label_font = _font("bold", 26)
+        label_w = draw.textlength(label, font=label_font)
+        draw.text((_s(cx) - label_w / 2, _s(msg_y)), label, font=label_font, fill=INK_SOFT, anchor="mm")
+    else:  # land
         status_fill = SERIES_MESSAGES if net is not None and net >= 0 else (226, 82, 96, 255)
         status_text = (
             f"✅ +{_format_card_coins(net)} coins" if net is not None and net > 0
@@ -830,7 +838,7 @@ def render_roulette_card(
         status_w = _rich_width(draw, status_text, status_font, emoji_map, _s(32))
         draw_rich_text(
             canvas, draw,
-            _s(cx) - status_w / 2, _s(560),
+            _s(cx) - status_w / 2, _s(msg_y),
             status_text, status_font, status_fill, emoji_map, _s(32),
         )
 

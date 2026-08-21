@@ -490,18 +490,13 @@ def _roulette_bet_view(user_id: int, amount: int) -> discord.ui.View:
 
 
 class _RouletteModal(discord.ui.Modal):
-    """Modal : montant (pré-rempli, modifiable) + numéro/douzaine/colonne."""
+    """Modal : numéro (Plein) ou douzaine/colonne. La mise vient de /roulette."""
 
     def __init__(self, bet_type: str, user_id: int, amount: int):
-        super().__init__(title=f"{ROULETTE_TYPES[bet_type]} ({ROULETTE_ODDS[bet_type]})")
+        super().__init__(title=f"{ROULETTE_TYPES[bet_type]} — {_format_coins(amount)} coins ({ROULETTE_ODDS[bet_type]})")
         self.bet_type = bet_type
         self.user_id = user_id
-        self.amount_input = discord.ui.TextInput(
-            label="Mise (coins)", min_length=1, max_length=10,
-            default=str(amount),
-            placeholder=f"{ROULETTE_MIN_BET} – {ROULETTE_MAX_BET}",
-        )
-        self.add_item(self.amount_input)
+        self.amount = amount
         if bet_type == "plein":
             self.number_input = discord.ui.TextInput(
                 label="Numéro (0-36)", min_length=1, max_length=2, placeholder="0 à 36",
@@ -526,18 +521,7 @@ class _RouletteModal(discord.ui.Modal):
             )
             return
 
-        try:
-            amount = round(float(self.amount_input.value.replace(",", ".")), 2)
-        except ValueError:
-            await interaction.response.send_message("Montant invalide.", ephemeral=True)
-            return
-        if amount < ROULETTE_MIN_BET or amount > ROULETTE_MAX_BET:
-            await interaction.response.send_message(
-                f"Mise entre **{ROULETTE_MIN_BET}** et **{ROULETTE_MAX_BET}** coins.",
-                ephemeral=True,
-            )
-            return
-
+        amount = self.amount
         bet_type = self.bet_type
         if bet_type == "plein":
             try:

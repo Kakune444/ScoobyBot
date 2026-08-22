@@ -384,9 +384,24 @@ class Economy(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="roulette", description="Jouer à la roulette européenne")
-    @app_commands.describe(mise="Le montant de la mise (1 à 1 000 000 coins)")
+    @app_commands.describe(
+        mise="Le montant de la mise (1 à 1 000 000 coins)",
+        type="Type de mise : rouge, noir, pair, impair, manque, passe, douzaine, colonne, plein",
+        detail="Numéro (0-36) pour plein, ou sélection douzaine/colonne (ex. 1-12 / 2eme)",
+    )
+    @app_commands.choices(type=[
+        app_commands.Choice(name="🔴 Rouge", value="rouge"),
+        app_commands.Choice(name="⚫ Noir", value="noir"),
+        app_commands.Choice(name="Pair", value="pair"),
+        app_commands.Choice(name="Impair", value="impair"),
+        app_commands.Choice(name="Manque (1-18)", value="manque"),
+        app_commands.Choice(name="Passe (19-36)", value="passe"),
+        app_commands.Choice(name="Douzaine", value="douzaine"),
+        app_commands.Choice(name="Colonne", value="colonne"),
+        app_commands.Choice(name="Plein (numéro)", value="plein"),
+    ])
     @app_commands.guild_only()
-    async def roulette(self, interaction: discord.Interaction, mise: int):
+    async def roulette(self, interaction: discord.Interaction, mise: int, type: str, detail: str | None = None):
         if mise < ROULETTE_MIN_BET or mise > ROULETTE_MAX_BET:
             await interaction.response.send_message(
                 f"Mise entre **{ROULETTE_MIN_BET}** et **{ROULETTE_MAX_BET}** coins.",
@@ -394,151 +409,35 @@ class Economy(commands.Cog):
             )
             return
 
-        try:
-            balance = await get_coin_balance(
-                guild_id=interaction.guild.id,
-                user_id=interaction.user.id,
-            )
-        except Exception as error:
-            print(f"Erreur Supabase (solde roulette) : {error}")
-            await interaction.response.send_message(
-                "Impossible de vérifier ton solde pour le moment.",
-                ephemeral=True,
-            )
+        if type not in ROULETTE_TYPES:
+            await interaction.response.send_message("Type de mise invalide.", ephemeral=True)
             return
 
-        if mise > balance:
-            await interaction.response.send_message(
-                f"Solde insuffisant : il te faut **{_format_coins(mise)} coins** "
-                f"et tu en as **{_format_coins(balance)}**.",
-                ephemeral=True,
-            )
-            return
-
-        try:
-            emoji_map = await fetch_emoji_images(collect_emojis("🎡", "✅", "❌"))
-        except Exception as error:
-            print(f"Erreur Twemoji (roulette) : {error}")
-            emoji_map = {}
-
-        image = render_roulette_card(
-            state="bet",
-            balance=balance,
-            bet=mise,
-            bet_label="Choisis un type de mise",
-            emoji_map=emoji_map,
-        )
-        view = _roulette_bet_view(interaction.user.id, mise)
-        await interaction.response.send_message(
-            file=to_discord_file(image, "roulette.png"),
-            view=view,
-        )
-
-    @app_commands.command(name="balance", description="Afficher ton solde de coins")
-    @app_commands.guild_only()
-    async def balance(self, interaction: discord.Interaction):
-        amount = await get_coin_balance(
-            guild_id=interaction.guild.id,
-            user_id=interaction.user.id,
-        )
-        await interaction.response.send_message(
-            f"💰 {interaction.user.mention}, tu as **{_format_coins(amount)} coins**.\n"
-            f"💬 *{scooby_quote()}*"
-        )
-
-    @commands.Cog.listener()
-    async def on_interaction(self, interaction: discord.Interaction):
-        if interaction.type != discord.InteractionType.component:
-            return
-        custom_id = interaction.data.get("custom_id", "")
-        if not custom_id.startswith("roulettebet:"):
-            return
-        parts = custom_id.split(":")
-        if len(parts) != 4:
-            return
-        _, user_id, bet_type, amount = parts
-        if int(user_id) != interaction.user.id:
-            await interaction.response.send_message(
-                "Cette roulette ne t'appartient pas.", ephemeral=True
-            )
-            return
-        await interaction.response.send_modal(
-            _RouletteModal(bet_type, interaction.user.id, int(amount))
-        )
-
-
-def _roulette_bet_view(user_id: int, amount: int) -> discord.ui.View:
-    """Boutons de mise persistants sous l'image (pattern roles.py)."""
-    labels = {
-        "rouge": "🔴 Rouge", "noir": "⚫ Noir", "pair": "Pair", "impair": "Impair",
-        "manque": "1-18", "passe": "19-36", "plein": "🎯 Plein",
-    }
-    view = discord.ui.View(timeout=None)
-    for bet_type, label in labels.items():
-        view.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label=label,
-            custom_id=f"roulettebet:{user_id}:{bet_type}:{amount}",
-        ))
-    for bet_type, label in (("douzaine", "Douzaine"), ("colonne", "Colonne")):
-        view.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.primary,
-            label=label,
-            custom_id=f"roulettebet:{user_id}:{bet_type}:{amount}",
-        ))
-    return view
-
-
-class _RouletteModal(discord.ui.Modal):
-    """Modal : numéro (Plein) ou douzaine/colonne. La mise vient de /roulette."""
-
-    def __init__(self, bet_type: str, user_id: int, amount: int):
-        super().__init__(title=f"{ROULETTE_TYPES[bet_type]} — {_format_coins(amount)} coins ({ROULETTE_ODDS[bet_type]})")
-        self.bet_type = bet_type
-        self.user_id = user_id
-        self.amount = amount
-        if bet_type == "plein":
-            self.number_input = discord.ui.TextInput(
-                label="Numéro (0-36)", min_length=1, max_length=2, placeholder="0 à 36",
-            )
-            self.add_item(self.number_input)
-        elif bet_type in ("douzaine", "colonne"):
-            options = (
-                [("1-12", "Douzaine 1 (1-12)"), ("13-24", "Douzaine 2 (13-24)"), ("25-36", "Douzaine 3 (25-36)")]
-                if bet_type == "douzaine"
-                else [("1ere", "Colonne 1"), ("2eme", "Colonne 2"), ("3eme", "Colonne 3")]
-            )
-            self.param_select = discord.ui.Select(
-                placeholder="Choisis…",
-                options=[discord.SelectOption(label=label, value=value) for value, label in options],
-            )
-            self.add_item(self.param_select)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "Cette roulette ne t'appartient pas.", ephemeral=True
-            )
-            return
-
-        amount = self.amount
-        bet_type = self.bet_type
-        if bet_type == "plein":
-            try:
-                num = int(self.number_input.value)
-            except ValueError:
-                num = -1
-            if num < 0 or num > 36:
-                await interaction.response.send_message("Numéro invalide (0-36).", ephemeral=True)
+        param: str | None = None
+        if type == "plein":
+            if detail is None or not detail.isdigit() or not (0 <= int(detail) <= 36):
+                await interaction.response.send_message(
+                    "Pour un Plein, précise `detail` avec un numéro entre 0 et 36.",
+                    ephemeral=True,
+                )
                 return
-            param = str(num)
-        elif bet_type in ("douzaine", "colonne"):
-            param = self.param_select.values[0]
-        else:
-            param = None
+            param = detail
+        elif type in ("douzaine", "colonne"):
+            allowed = {
+                "douzaine": ("1-12", "13-24", "25-36"),
+                "colonne": ("1ere", "2eme", "3eme"),
+            }
+            if detail is None or detail not in allowed[type]:
+                await interaction.response.send_message(
+                    f"Pour une douzaine/colonne, précise `detail` : {', '.join(allowed[type])}.",
+                    ephemeral=True,
+                )
+                return
+            param = detail
 
         guild_id = interaction.guild.id
-        user_id = self.user_id
+        user_id = interaction.user.id
+        bet_type = type
         bet_label = _roulette_bet_label(bet_type, param)
 
         try:
@@ -551,9 +450,9 @@ class _RouletteModal(discord.ui.Modal):
             )
             return
 
-        if amount > balance:
+        if mise > balance:
             await interaction.response.send_message(
-                f"Solde insuffisant : il te faut **{_format_coins(amount)} coins** "
+                f"Solde insuffisant : il te faut **{_format_coins(mise)} coins** "
                 f"et tu en as **{_format_coins(balance)}**.",
                 ephemeral=True,
             )
@@ -562,13 +461,13 @@ class _RouletteModal(discord.ui.Modal):
         result_num = random.randint(0, 36)
         color = _roulette_color(result_num)
         multiplier = _roulette_multiplier(bet_type, param, result_num)
-        payout = round(amount * multiplier, 2)
+        payout = round(mise * multiplier, 2)
         game_id = str(uuid.uuid4())
 
         try:
             outcome = await play_roulette(
                 game_id=game_id, guild_id=guild_id, user_id=user_id,
-                bet_type=bet_type, bet_param=param, bet=amount,
+                bet_type=bet_type, bet_param=param, bet=mise,
                 result_num=result_num, payout=payout,
             )
         except Exception as error:
@@ -596,22 +495,27 @@ class _RouletteModal(discord.ui.Modal):
             result_num=result_num,
             color_label=color,
             balance=outcome["balance"],
-            bet=amount,
+            bet=mise,
             bet_label=f"{bet_label} ({ROULETTE_ODDS[bet_type]})",
             emoji_map=emoji_map,
             payout=outcome["payout"],
             net=outcome["net"],
         )
-        try:
-            await interaction.response.edit_message(
-                content=None,
-                attachments=[to_discord_file(image, "roulette.png")],
-                view=_roulette_bet_view(user_id, amount),
-            )
-        except discord.NotFound:
-            return
-        except discord.HTTPException as error:
-            print(f"Erreur Discord (résultat roulette) : {error}")
+        await interaction.response.send_message(
+            file=to_discord_file(image, "roulette.png")
+        )
+
+    @app_commands.command(name="balance", description="Afficher ton solde de coins")
+    @app_commands.guild_only()
+    async def balance(self, interaction: discord.Interaction):
+        amount = await get_coin_balance(
+            guild_id=interaction.guild.id,
+            user_id=interaction.user.id,
+        )
+        await interaction.response.send_message(
+            f"💰 {interaction.user.mention}, tu as **{_format_coins(amount)} coins**.\n"
+            f"💬 *{scooby_quote()}*"
+        )
 
 
 async def setup(bot):

@@ -464,6 +464,8 @@ class Economy(commands.Cog):
         payout = round(mise * multiplier, 2)
         game_id = str(uuid.uuid4())
 
+        await interaction.response.defer()
+
         try:
             outcome = await play_roulette(
                 game_id=game_id, guild_id=guild_id, user_id=user_id,
@@ -472,13 +474,13 @@ class Economy(commands.Cog):
             )
         except Exception as error:
             if "INSUFFICIENT_COINS" in str(error):
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Ton solde a changé entre-temps : pas assez de coins pour cette mise.",
                     ephemeral=True,
                 )
                 return
             print(f"Erreur Supabase (roulette) : {error}")
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "La partie n'a pas pu être enregistrée. Aucun coin débité.",
                 ephemeral=True,
             )
@@ -490,20 +492,37 @@ class Economy(commands.Cog):
             print(f"Erreur Twemoji (roulette) : {error}")
             emoji_map = {}
 
-        image = render_roulette_card(
-            state="land",
-            result_num=result_num,
-            color_label=color,
-            balance=outcome["balance"],
-            bet=mise,
-            bet_label=f"{bet_label} ({ROULETTE_ODDS[bet_type]})",
-            emoji_map=emoji_map,
-            payout=outcome["payout"],
-            net=outcome["net"],
+        def _card(state: str, *, frame: int = 0) -> discord.File:
+            return to_discord_file(render_roulette_card(
+                state=state,
+                frame=frame,
+                result_num=result_num if state == "land" else None,
+                color_label=color if state == "land" else None,
+                balance=outcome["balance"],
+                bet=mise,
+                bet_label=f"{bet_label} ({ROULETTE_ODDS[bet_type]})",
+                emoji_map=emoji_map,
+                payout=outcome["payout"] if state == "land" else None,
+                net=outcome["net"] if state == "land" else None,
+            ), "roulette.png")
+
+        # Animation : la bille lancée ralentit (3 frames de spin)
+        message = await interaction.followup.send(
+            file=_card("spin", frame=0), wait=True,
         )
-        await interaction.response.send_message(
-            file=to_discord_file(image, "roulette.png")
-        )
+        for frame in range(1, 4):
+            await asyncio.sleep(0.45)
+            try:
+                await message.edit(attachments=[_card("spin", frame=frame)])
+            except discord.NotFound:
+                return
+
+        # Résultat final
+        await asyncio.sleep(0.45)
+        try:
+            await message.edit(attachments=[_card("land")])
+        except discord.NotFound:
+            return
 
     @app_commands.command(name="balance", description="Afficher ton solde de coins")
     @app_commands.guild_only()
